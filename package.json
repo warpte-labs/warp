@@ -1,0 +1,122 @@
+{
+  "name": "warp",
+  "displayName": "Warp — Grok Sidebar Agent",
+  "description": "Secondary-sidebar coding agent for VS Code & Cursor. Chat with Grok Build over ACP: tools, slash commands, model/effort, history, and OAuth.",
+  "version": "0.8.1",
+  "publisher": "warp-agent",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#121212",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Machine Learning",
+    "Other"
+  ],
+  "keywords": [
+    "agent",
+    "chat",
+    "ai",
+    "grok",
+    "xai",
+    "sidebar",
+    "acp",
+    "coding-agent",
+    "cursor"
+  ],
+  "extensionKind": [
+    "ui",
+    "workspace"
+  ],
+  "activationEvents": [
+    "onView:warp.chat",
+    "onCommand:warp.open",
+    "onCommand:warp.signIn",
+    "onCommand:warp.signOut",
+    "onCommand:warp.restartAgent"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "warp",
+          "title": "Warp",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "warp": [
+        {
+          "type": "webview",
+          "id": "warp.chat",
+          "name": "Chat"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "warp.open",
+        "title": "Open Chat",
+        "category": "Warp",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "warp.signIn",
+        "title": "Sign In (Grok account)",
+        "category": "Warp"
+      },
+      {
+        "command": "warp.signOut",
+        "title": "Sign Out",
+        "category": "Warp"
+      },
+      {
+        "command": "warp.restartAgent",
+        "title": "Restart Agent",
+        "category": "Warp"
+      }
+    ],
+    "configuration": {
+      "title": "Warp",
+      "properties": {
+        "warp.binaryPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to the Grok / Grokfork binary that supports `agent stdio` (ACP). Leave empty to auto-detect (`grokfork`, `grok`, `~/.grok/bin/grok`, `~/bin/grokfork`)."
+        },
+        "warp.alwaysApprove": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "When enabled, the agent starts with `--always-approve` (skip tool permission prompts). Prefer **off** on untrusted workspaces. Toggle with `/always-approve` or the footer **yolo/ask** chip."
+        },
+        "warp.mockMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "UI-only mock replies without spawning the agent (for development)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --allow-missing-repository --no-dependencies --baseContentUrl https://github.com/warp-agent/warp/raw/main --baseImagesUrl https://github.com/warp-agent/warp/raw/main",
+    "package:public": "npm run compile && npm run package",
+    "sync:marked": "node -e \"require('fs').copyFileSync('node_modules/marked/lib/marked.umd.js','media/webview/lib/marked.umd.js')\""
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "marked": "^18.0.7"
+  }
+}

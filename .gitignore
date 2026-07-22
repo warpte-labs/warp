@@ -1,0 +1,14 @@
+node_modules/
+out/
+*.vsix
+.vscode-test/
+*.log
+.DS_Store
+Thumbs.db
+.env
+.env.*
+llm.txt
+Alec_Cohen_CV.pdf
+random-stuff.js
+_acp_*.txt
+package-lock.json

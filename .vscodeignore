@@ -1,0 +1,46 @@
+# Dev / editor
+.vscode/**
+.vscode-test/**
+.cursor/**
+.idea/**
+.git/**
+.gitignore
+.gitattributes
+media/webview/ARCHITECTURE.md
+media/webview/README.md
+
+# TypeScript sources (ship compiled out/ only)
+src/**
+scripts/**
+tsconfig.json
+**/*.ts
+**/*.map
+**/*.vsixmap
+
+# Dependencies & lockfiles (webview bundles marked already)
+node_modules/**
+package-lock.json
+npm-debug.log*
+
+# Local / private / mockups — never ship
+Alec_Cohen_CV.pdf
+random-stuff.js
+llm.txt
+localtools/**
+logos/**
+images/**
+docs/**
+PUBLISHING.md
+_acp_*.txt
+*.log
+
+# Build artifacts & old packages
+*.vsix
+grokfork-*.vsix
+warp-*.vsix
+out/**/*.map
+
+# Tests / CI if added later
+coverage/**
+**/*.test.js
+**/*.spec.js
