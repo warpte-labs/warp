@@ -28,20 +28,42 @@ export type SessionLite = {
   messageCount: number;
 };
 
+type LiteCache = {
+  at: number;
+  sessions: number;
+  messages: number;
+  items: SessionLite[];
+};
+
+/** Short TTL — Usage re-opens often; avoid re-walking ~/.grok/sessions every click. */
+const LITE_TTL_MS = 8_000;
+let liteCache: LiteCache | null = null;
+
 /**
  * Cheap session list for Usage — summary.json only, no transcript previews.
  * Avoids the expensive firstUserPreview() walks used by listLocalSessions.
+ * Cached ~8s so Settings → Usage feels instant on re-open / range switch.
  */
 export function listSessionsLite(limit = 80): {
   sessions: number;
   messages: number;
   items: SessionLite[];
 } {
+  const lim = Math.max(1, limit);
+  if (liteCache && Date.now() - liteCache.at < LITE_TTL_MS) {
+    return {
+      sessions: liteCache.sessions,
+      messages: liteCache.messages,
+      items: liteCache.items.slice(0, lim),
+    };
+  }
+
   const root = path.join(grokHome(), "sessions");
   const items: SessionLite[] = [];
   let sessions = 0;
   let messages = 0;
   if (!fs.existsSync(root)) {
+    liteCache = { at: Date.now(), sessions: 0, messages: 0, items: [] };
     return { sessions: 0, messages: 0, items: [] };
   }
   let groups: string[] = [];
@@ -101,11 +123,22 @@ export function listSessionsLite(limit = 80): {
     }
   }
   items.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  liteCache = {
+    at: Date.now(),
+    sessions,
+    messages,
+    items,
+  };
   return {
     sessions,
     messages,
-    items: items.slice(0, Math.max(1, limit)),
+    items: items.slice(0, lim),
   };
+}
+
+/** Drop session lite cache (force refresh). */
+export function clearSessionsLiteCache(): void {
+  liteCache = null;
 }
 
 /** @deprecated use listSessionsLite */

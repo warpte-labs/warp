@@ -39,7 +39,10 @@
       opts.btnOpen.classList.toggle("on", open);
       if (open) {
         showList();
-        requestList();
+        // Live list while panel open (fs watch + poll)
+        opts.post({ type: "historySubscribe" });
+      } else {
+        opts.post({ type: "historyUnsubscribe" });
       }
       if (typeof opts.onOpenChange === "function") {
         opts.onOpenChange(open);
@@ -61,19 +64,24 @@
       opts.btnBack.textContent = "← Back";
     }
 
-    function requestList() {
-      state.loading = true;
-      state.allSessions = [];
-      state.shown = 0;
-      opts.list.innerHTML =
-        '<div class="history-loading">Loading local sessions…</div>';
+    function requestList(force) {
+      // Soft live updates skip the full loading flash
+      if (force || !state.allSessions.length) {
+        state.loading = true;
+        state.allSessions = [];
+        state.shown = 0;
+        opts.list.innerHTML =
+          '<div class="history-loading">Loading local sessions…</div>';
+      }
       opts.post({ type: "listHistory" });
     }
 
     function requestDetail(id) {
       state.viewingId = id;
-      opts.detailBody.innerHTML =
-        '<div class="history-loading">Loading transcript…</div>';
+      if (!opts.detailBody.querySelector(".hist-msg")) {
+        opts.detailBody.innerHTML =
+          '<div class="history-loading">Loading transcript…</div>';
+      }
       showDetail("Loading…");
       opts.post({ type: "getHistory", sessionId: id });
     }
@@ -125,10 +133,16 @@
 
     /**
      * @param {Array} sessions
+     * @param {{ live?: boolean }} [meta]
      */
-    function renderList(sessions) {
+    function renderList(sessions, meta) {
       state.loading = false;
-      state.allSessions = Array.isArray(sessions) ? sessions : [];
+      const next = Array.isArray(sessions) ? sessions : [];
+      const live = !!(meta && meta.live);
+      // Live re-push: keep scroll position / shown window when possible
+      const prevScroll = live ? opts.list.scrollTop : 0;
+      const prevShown = live ? state.shown : 0;
+      state.allSessions = next;
       state.shown = 0;
       opts.list.innerHTML = "";
       if (!state.allSessions.length) {
@@ -136,7 +150,14 @@
           '<div class="history-empty">No local chats yet.<br/>Send a message to create one — history is stored by Grok on this machine.</div>';
         return;
       }
-      appendMore();
+      // Restore enough pages so scroll stays meaningful
+      const want = live && prevShown > 0 ? prevShown : 20;
+      while (state.shown < want && state.shown < state.allSessions.length) {
+        appendMore();
+      }
+      if (live && prevScroll > 0) {
+        opts.list.scrollTop = prevScroll;
+      }
     }
 
     opts.list.addEventListener("scroll", () => {
@@ -153,11 +174,18 @@
     });
 
     /**
-     * @param {{ session?: object|null, messages?: Array }} payload
+     * @param {{ session?: object|null, messages?: Array, live?: boolean }} payload
      */
     function renderDetail(payload) {
       const session = payload && payload.session;
       const messages = (payload && payload.messages) || [];
+      const live = !!(payload && payload.live);
+      const nearBottom =
+        opts.detailBody.scrollHeight -
+          opts.detailBody.scrollTop -
+          opts.detailBody.clientHeight <
+        80;
+      const prevScroll = opts.detailBody.scrollTop;
       showDetail((session && session.title) || "Chat");
 
       opts.detailBody.innerHTML = "";
@@ -181,7 +209,11 @@
         el.appendChild(body);
         opts.detailBody.appendChild(el);
       }
-      opts.detailBody.scrollTop = 0;
+      if (live && !nearBottom) {
+        opts.detailBody.scrollTop = prevScroll;
+      } else {
+        opts.detailBody.scrollTop = live ? opts.detailBody.scrollHeight : 0;
+      }
     }
 
     function formatWhen(iso) {
@@ -218,15 +250,18 @@
     opts.btnBack.addEventListener("click", () => {
       if (state.viewingId) {
         showList();
+        // Back to list — stop detail watch, list watch stays if panel open
+        opts.post({ type: "listHistory" });
         return;
       }
       setOpen(false);
     });
+    // Force re-pull (live already runs; ↻ is optional manual)
     opts.btnRefresh.addEventListener("click", () => {
       if (state.viewingId) {
         requestDetail(state.viewingId);
       } else {
-        requestList();
+        requestList(true);
       }
     });
 
@@ -238,6 +273,7 @@
         opts.panel.classList.toggle("hidden", false);
         opts.panel.setAttribute("aria-hidden", "false");
         opts.btnOpen.classList.toggle("on", true);
+        opts.post({ type: "historySubscribe" });
         if (typeof opts.onOpenChange === "function") {
           opts.onOpenChange(true);
         }

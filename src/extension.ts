@@ -7,7 +7,12 @@ import {
   registerCommands,
   maybeWelcome,
 } from "./commands";
-import { initLicense, getLicenseStatusLocal } from "./license";
+import {
+  initLicense,
+  getLicenseStatusLocal,
+  getInstallId,
+  getBillingEmail,
+} from "./license";
 
 let output: vscode.OutputChannel | undefined;
 
@@ -19,6 +24,7 @@ export function activate(context: vscode.ExtensionContext) {
   log("activate() starting");
 
   initLicense(context);
+  log(`license: install=${getInstallId()} email=${getBillingEmail() || "none"}`);
   const plan = getLicenseStatusLocal();
   log(`license: ${plan.kind} — ${plan.detail}`);
 

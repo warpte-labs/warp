@@ -36,6 +36,10 @@ export class WarpViewProvider implements vscode.WebviewViewProvider {
       this.log?.(`[acp] turn ${p.phase}`);
       this.post({ type: "turn", phase: p.phase });
     });
+    this.agent.on("cancelled", () => {
+      this.log?.(`[acp] cancelled (user stop)`);
+      this.post({ type: "cancelled" });
+    });
     this.agent.on("error", (text: string) => {
       this.log?.(`[acp] error ${text}`);
       this.post({ type: "error", text });
@@ -46,6 +50,27 @@ export class WarpViewProvider implements vscode.WebviewViewProvider {
     this.agent.on("tool", (p: unknown) => {
       this.log?.(`[acp] tool ${JSON.stringify(p)}`);
       this.post({ type: "tool", ...(p as object) });
+    });
+    this.agent.on(
+      "task",
+      (p: {
+        event?: string;
+        task?: { id?: string; kind?: string; status?: string; description?: string };
+        snapshot?: object;
+      }) => {
+        const t = p?.task;
+        this.log?.(
+          `[acp] task ${p?.event || "upsert"} ${t?.kind || "?"} ${t?.status || "?"} ${String(t?.description || "").slice(0, 60)}`
+        );
+        this.post({ type: "task", ...p });
+      }
+    );
+    this.agent.on("tasks", (p: object) => {
+      const snap = p as { running?: number; tasks?: unknown[] };
+      this.log?.(
+        `[acp] tasks running=${snap?.running ?? 0} total=${Array.isArray(snap?.tasks) ? snap.tasks.length : 0}`
+      );
+      this.post({ type: "tasks", ...p });
     });
     this.agent.on("models", (p: object) => {
       this.log?.(
@@ -97,6 +122,11 @@ export class WarpViewProvider implements vscode.WebviewViewProvider {
       if (cmds.length) {
         this.post({ type: "commands", commands: cmds });
       }
+      const tasks =
+        rec.tasks && typeof rec.tasks === "object"
+          ? rec.tasks
+          : this.agent.getTasksSnapshot();
+      this.post({ type: "tasks", ...(tasks as object) });
       this.post({
         type: "permissionMode",
         permissionMode: this.agent.getPermissionMode(),

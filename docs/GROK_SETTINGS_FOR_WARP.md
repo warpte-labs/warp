@@ -16,6 +16,8 @@ Survey of `~/.grok/config.toml` / Grok Build docs for settings Warp could surfac
 | Export / copy | host clipboard + save dialog | `/export`, `/copy` |
 | Rename session | `summary.json` `generated_title` | `/rename` · `/title` |
 | Prompt recall | webview history | ↑ empty / `/history` |
+| Multi-agent registry | ACP `spawn_subagent` / bg tools | Host `TaskRegistry` → `task` / `tasks` events; `GROK_SUBAGENTS` via `warp.subagentsEnabled` |
+| List tasks | webview `listTasks` | Snapshot of running/completed subagents + bg work |
 
 ## High value remaining
 

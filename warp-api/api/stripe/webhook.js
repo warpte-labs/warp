@@ -1,9 +1,9 @@
 /**
  * POST /api/stripe/webhook
- * Verify Stripe signature · publish Ably license events (no DB).
+ * Verify signature · sync Neon/Redis · Ably notify.
  */
 import { verifyWebhookSignature } from "../../lib/stripe.js";
-import { installChannel, publishLicense } from "../../lib/ably.js";
+import { applyStripePro } from "../../lib/licenseStore.js";
 
 export const config = {
   api: { bodyParser: false },
@@ -50,15 +50,13 @@ export default async function handler(req, res) {
     }
 
     const type = event && event.type;
-    if (type) {
-      console.log(`[stripe webhook] ${type} ${event.id || ""}`);
-    }
+    console.log(`[stripe webhook] ${type || "?"} ${event.id || ""}`);
 
     try {
-      await handleLicenseRealtime(event);
+      await handleStripeEvent(event);
     } catch (e) {
-      console.error("[stripe webhook] ably", e);
-      // Still 200 so Stripe does not retry forever on Ably blips
+      console.error("[stripe webhook] handle", e);
+      // 200 so Stripe doesn't infinite-retry on app bugs; log for ops
     }
 
     res.statusCode = 200;
@@ -70,73 +68,87 @@ export default async function handler(req, res) {
   }
 }
 
-/**
- * Notify extension(s) via Ably when subscription state changes.
- */
-async function handleLicenseRealtime(event) {
+async function handleStripeEvent(event) {
   if (!event || !event.type) return;
   const obj = (event.data && event.data.object) || {};
   const type = event.type;
 
-  let installId = "";
-  let email = "";
-  let pro = false;
-
   if (type === "checkout.session.completed") {
-    installId =
+    const installId =
       (obj.metadata && obj.metadata.installId) ||
       obj.client_reference_id ||
       "";
-    email =
+    const email =
       (obj.customer_details && obj.customer_details.email) ||
       obj.customer_email ||
       (obj.metadata && obj.metadata.email) ||
       "";
-    // paid subscription checkout
-    pro =
+    const pro =
       obj.mode === "subscription" &&
       (obj.payment_status === "paid" ||
         obj.payment_status === "no_payment_required" ||
         obj.status === "complete");
-  } else if (
+    if (!pro) return;
+    await applyStripePro({
+      installId,
+      email,
+      customerId: obj.customer || null,
+      subscriptionId: obj.subscription || null,
+      stripeStatus: "active",
+      pro: true,
+    });
+    return;
+  }
+
+  if (
     type === "customer.subscription.created" ||
     type === "customer.subscription.updated"
   ) {
-    installId = (obj.metadata && obj.metadata.installId) || "";
-    email = (obj.metadata && obj.metadata.email) || "";
     const st = String(obj.status || "");
-    pro = st === "active" || st === "trialing";
-  } else if (type === "customer.subscription.deleted") {
-    installId = (obj.metadata && obj.metadata.installId) || "";
-    email = (obj.metadata && obj.metadata.email) || "";
-    pro = false;
-  } else if (type === "invoice.paid") {
-    // subscription renewals — metadata often empty; skip if no install
-    installId =
+    const pro = st === "active" || st === "trialing";
+    const installId = (obj.metadata && obj.metadata.installId) || "";
+    const email = (obj.metadata && obj.metadata.email) || "";
+    await applyStripePro({
+      installId,
+      email,
+      customerId: obj.customer || null,
+      subscriptionId: obj.id || null,
+      stripeStatus: st,
+      pro,
+    });
+    return;
+  }
+
+  if (type === "customer.subscription.deleted") {
+    const installId = (obj.metadata && obj.metadata.installId) || "";
+    const email = (obj.metadata && obj.metadata.email) || "";
+    await applyStripePro({
+      installId,
+      email,
+      customerId: obj.customer || null,
+      subscriptionId: obj.id || null,
+      stripeStatus: "canceled",
+      pro: false,
+    });
+    return;
+  }
+
+  if (type === "invoice.paid") {
+    const installId =
       (obj.subscription_details &&
         obj.subscription_details.metadata &&
         obj.subscription_details.metadata.installId) ||
       (obj.metadata && obj.metadata.installId) ||
       "";
-    email = (obj.metadata && obj.metadata.email) || "";
-    if (!installId) return;
-    pro = true;
-  } else {
-    return;
+    const email = (obj.metadata && obj.metadata.email) || "";
+    if (!installId && !email && !obj.customer) return;
+    await applyStripePro({
+      installId,
+      email,
+      customerId: obj.customer || null,
+      subscriptionId: obj.subscription || null,
+      stripeStatus: "active",
+      pro: true,
+    });
   }
-
-  const channels = [];
-  const ch = installChannel(installId);
-  if (ch) channels.push(ch);
-  if (!channels.length) {
-    console.log("[stripe webhook] no installId — skip Ably", type);
-    return;
-  }
-
-  await publishLicense(channels, {
-    pro: !!pro,
-    email: String(email || "").toLowerCase(),
-    event: type,
-    at: Date.now(),
-  });
 }

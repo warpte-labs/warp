@@ -100,9 +100,7 @@
 
     // Dense session table (V6) — reuses section label + stat-k/v tones
     html += sessionsTableHtml(data.sessions || []);
-
-    html +=
-      '<button type="button" class="set-sv usage-refresh" data-action="refreshUsage">Refresh</button>';
+    // Live: log watch + Ably (no Refresh button)
     html += "</div>";
 
     hostEl.innerHTML = html;
@@ -111,6 +109,105 @@
       positionPill();
       mountChart(series.labels || [], series.values || []);
     });
+  }
+
+  /**
+   * Soft live update — refresh numbers/chart without full tear-down when possible.
+   * @param {object} data
+   */
+  function applyLive(data) {
+    if (!hostEl || !hostEl.querySelector(".usage-wrap")) {
+      renderInto(hostEl, data, hooks || undefined);
+      return;
+    }
+    lastData = data && typeof data === "object" ? data : {};
+    if (lastData.series && lastData.series.range) {
+      activeRange = String(lastData.series.range);
+    }
+    const series = lastData.series || { labels: [], values: [], range: activeRange };
+    const t = lastData.totals || {};
+
+    // Stats row
+    const stats = hostEl.querySelector(".usage-stats");
+    if (stats) {
+      const tmp = document.createElement("div");
+      tmp.innerHTML =
+        stat("Tokens", t.tokens ? fmt(t.tokens) : "—") +
+        stat("Turns", t.inferenceTurns ? fmt(t.inferenceTurns) : "—") +
+        stat("Sessions", fmt(t.sessions || 0)) +
+        stat("Messages", fmt(t.messages || 0));
+      stats.innerHTML = tmp.innerHTML;
+    }
+
+    // Credits bar
+    const cr = lastData.credits;
+    let crEl = hostEl.querySelector(".cr");
+    if (cr && typeof cr.creditUsagePercent === "number") {
+      const pct = Math.min(
+        100,
+        Math.max(0, Math.round(Number(cr.creditUsagePercent) || 0))
+      );
+      const tone = pct >= 90 ? " hot" : pct >= 75 ? " warn" : "";
+      const meta = creditMeta(cr);
+      if (!crEl) {
+        crEl = document.createElement("div");
+        crEl.className = "cr";
+        const chartSec = hostEl.querySelector(".fc-dash-chart-section");
+        if (chartSec && chartSec.nextSibling) {
+          chartSec.parentNode.insertBefore(crEl, chartSec.nextSibling);
+        } else if (stats) {
+          stats.parentNode.insertBefore(crEl, stats);
+        }
+      }
+      crEl.innerHTML =
+        '<div class="cr-hd"><span class="cr-k">Credits</span><span class="cr-v">' +
+        pct +
+        '% <em>used</em></span></div>' +
+        '<div class="cr-track"><div class="cr-fill' +
+        tone +
+        '" style="width:' +
+        pct +
+        '%"></div></div>' +
+        (meta ? '<div class="cr-meta">' + esc(meta) + "</div>" : "");
+    }
+
+    // Sessions table (keep page if possible)
+    const sessWrap = hostEl.querySelector(".usage-sess");
+    if (sessWrap) {
+      const tmp = document.createElement("div");
+      tmp.innerHTML = sessionsTableHtml(lastData.sessions || []);
+      const next = tmp.firstElementChild;
+      if (next) {
+        sessWrap.replaceWith(next);
+        wireSessPager();
+      }
+    }
+
+    // Chart in place
+    if (chart) {
+      try {
+        chart.setOption(barOption(series.labels || [], series.values || []), {
+          notMerge: false,
+        });
+        chart.resize();
+      } catch (e) {
+        mountChart(series.labels || [], series.values || []);
+      }
+    } else {
+      mountChart(series.labels || [], series.values || []);
+    }
+
+    // Tabs active state
+    const container = hostEl.querySelector("#usage-ts-tabs");
+    if (container) {
+      container.querySelectorAll(".commerce-ts-tab").forEach(function (tab) {
+        tab.classList.toggle(
+          "active",
+          tab.getAttribute("data-range") === activeRange
+        );
+      });
+      positionPill();
+    }
   }
 
   function timescaleTabsHtml(active) {
@@ -135,15 +232,6 @@
 
   function wireUi() {
     if (!hostEl) return;
-    const refresh = hostEl.querySelector("[data-action=refreshUsage]");
-    if (refresh) {
-      refresh.addEventListener("click", function (e) {
-        e.preventDefault();
-        if (hooks && typeof hooks.onRefresh === "function") {
-          hooks.onRefresh();
-        }
-      });
-    }
     wireSessPager();
     const container = hostEl.querySelector("#usage-ts-tabs");
     if (!container) return;
@@ -227,8 +315,37 @@
         '<div class="usage-empty" style="padding:40px 12px">Chart library missing</div>';
       return;
     }
-    chart = echarts.init(el, null, { renderer: "canvas" });
-    chart.setOption(barOption(labels, values));
+    // Webview often mounts at 0×0 first frame — retry so bars actually paint
+    const tryInit = function (attempt) {
+      if (!hostEl || !el.isConnected) return;
+      const w = el.clientWidth;
+      const h = el.clientHeight;
+      if ((w < 8 || h < 8) && attempt < 12) {
+        window.setTimeout(function () {
+          tryInit(attempt + 1);
+        }, 40);
+        return;
+      }
+      disposeChart();
+      chart = echarts.init(el, null, { renderer: "canvas" });
+      chart.setOption(barOption(labels, values));
+      try {
+        chart.resize();
+      } catch (e) {
+        /* ignore */
+      }
+      // Second resize after layout settles (sidebar open animation)
+      window.setTimeout(function () {
+        if (chart) {
+          try {
+            chart.resize();
+          } catch (e2) {
+            /* ignore */
+          }
+        }
+      }, 120);
+    };
+    tryInit(0);
   }
 
   function barOption(labels, values) {
@@ -541,6 +658,7 @@
 
   W.usage = {
     renderInto: renderInto,
+    applyLive: applyLive,
     loadingHtml: loadingHtml,
     dispose: disposeChart,
     getRange: function () {

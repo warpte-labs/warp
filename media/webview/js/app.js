@@ -2,7 +2,7 @@
  * Warp webview bootstrap — wire modules only.
  *
  * Module map:
- *   dom, hero, cards, markdown, spinner, tools, transcript,
+ *   dom, hero, cards, markdown, spinner, agentFill, tools, subagents, transcript,
  *   history, attach, mention, slash, queue, compactBar, modelSelector, composer, hostBridge
  */
 (function () {
@@ -178,18 +178,64 @@
         },
       };
 
-  let toastTimer = null;
+  // Sticky toast — stays open until user clicks × (generic notices)
   function showToast(text) {
     if (!els.toast) return;
-    els.toast.textContent = text || "";
-    els.toast.hidden = !text;
-    if (toastTimer) clearTimeout(toastTimer);
-    if (text) {
-      toastTimer = setTimeout(() => {
-        els.toast.hidden = true;
-        els.toast.textContent = "";
-      }, 2800);
+    const label = text || "";
+    if (els.toastText) {
+      els.toastText.textContent = label;
+    } else {
+      els.toast.textContent = label;
     }
+    els.toast.hidden = !label;
+  }
+  function hideToast() {
+    if (!els.toast) return;
+    els.toast.hidden = true;
+    if (els.toastText) els.toastText.textContent = "";
+  }
+  if (els.toastClose) {
+    els.toastClose.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      hideToast();
+    });
+  }
+
+  /** Banner above the message input when trial expired / chat locked */
+  function applyLicense(msg) {
+    const bar = els.licenseBar;
+    if (!bar) return;
+    const kind = String(msg.kind || "");
+    const allowed = msg.allowed !== false && msg.allowed !== "false";
+    const locked =
+      kind === "expired" ||
+      (!allowed && kind !== "trial" && kind !== "pro" && kind !== "none");
+    // Show when server says expired / not allowed (except fresh "none" waiting trial)
+    const show =
+      kind === "expired" ||
+      (msg.pro !== true &&
+        msg.pro !== "true" &&
+        allowed === false &&
+        kind !== "none");
+    if (show) {
+      const text =
+        msg.detail ||
+        msg.label ||
+        "Free trial expired. Upgrade to Pro ($5/mo) to keep chatting.";
+      if (els.licenseBarText) {
+        els.licenseBarText.textContent = text;
+      }
+      bar.hidden = false;
+    } else {
+      bar.hidden = true;
+    }
+  }
+  if (els.licenseBarUpgrade) {
+    els.licenseBarUpgrade.addEventListener("click", (e) => {
+      e.preventDefault();
+      post({ type: "settingsAction", action: "subscribe" });
+    });
   }
 
   const composer = W.composer.mount({
@@ -364,12 +410,25 @@
     applyAuth,
     applyContext,
     applyPermissionMode,
+    applyLicense,
     showToast,
     settingsUi,
   });
 
   composer.bind();
   bridge.bind();
+
+  // Trial-expired notice → Upgrade button (same path as Settings → Upgrade)
+  window.addEventListener("warp-notice-action", (ev) => {
+    const action =
+      ev && ev.detail && ev.detail.action ? String(ev.detail.action) : "";
+    if (action === "subscribe") {
+      post({ type: "settingsAction", action: "subscribe" });
+    } else if (action) {
+      post({ type: "settingsAction", action: action });
+    }
+  });
+
   // Start in signed-out gate until host pushes auth
   if (els.root) {
     els.root.classList.add("is-signed-out");

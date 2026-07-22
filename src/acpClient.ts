@@ -16,15 +16,18 @@ import {
   type PromptAttachment,
 } from "./acp/promptContent";
 import { parseToolUpdate } from "./acp/toolParse";
+import { TaskRegistry, type TasksSnapshot, type WarpTask } from "./acp/tasks";
 import {
   binaryLooksAvailable,
   missingBinaryHelp,
   resolveBinary,
   workspaceCwd,
 } from "./paths";
+import { getSubagentsEnabled } from "./config";
 
 export type { PromptAttachment } from "./acp/promptContent";
 export type { ToolUiEvent } from "./acp/toolParse";
+export type { WarpTask, TasksSnapshot, TaskKind, TaskStatus } from "./acp/tasks";
 export type {
   ModelState,
   ModelInfo,
@@ -43,7 +46,20 @@ export type AvailableCommand = {
 type Pending = {
   resolve: (v: unknown) => void;
   reject: (e: Error) => void;
+  /** wall-clock timeout handle */
+  timer: ReturnType<typeof setTimeout>;
+  /** ms; session/prompt uses a long window and is refreshed on stream */
+  timeoutMs: number;
+  method: string;
 };
+
+/** Default RPC timeout (initialize, set_model, …). */
+const ACP_RPC_TIMEOUT_MS = 120_000;
+/**
+ * Multi-agent / long tool turns often exceed 2 minutes.
+ * session/prompt stays open until the turn finishes — refresh on stream.
+ */
+const ACP_PROMPT_TIMEOUT_MS = 20 * 60_000;
 
 /**
  * Minimal ACP NDJSON client over agent stdio.
@@ -63,6 +79,10 @@ export class AcpClient extends EventEmitter {
   private availableCommands: AvailableCommand[] = [];
   /** Warp tool policy — applied on next spawn. */
   private permissionMode: "ask" | "auto" | "yolo" = "ask";
+  /** Multi-agent / bg task board (parent session). */
+  private readonly tasks = new TaskRegistry();
+  /** User hit Stop — ignore stream until next prompt. */
+  private streamMuted = false;
 
   get connected(): boolean {
     return this.child !== null && !this.child.killed && this.sessionId !== null;
@@ -82,6 +102,14 @@ export class AcpClient extends EventEmitter {
 
   getAvailableCommands(): AvailableCommand[] {
     return this.availableCommands.slice();
+  }
+
+  getTasksSnapshot(): TasksSnapshot {
+    return this.tasks.snapshot();
+  }
+
+  getTask(id: string): WarpTask | undefined {
+    return this.tasks.get(id);
   }
 
   getAlwaysApprove(): boolean {
@@ -176,10 +204,55 @@ export class AcpClient extends EventEmitter {
     if (!prompt.length) {
       throw new Error("Empty prompt");
     }
-    await this.request("session/prompt", {
-      sessionId: this.sessionId,
-      prompt,
-    });
+    this.streamMuted = false;
+    try {
+      await this.request(
+        "session/prompt",
+        {
+          sessionId: this.sessionId,
+          prompt,
+        },
+        ACP_PROMPT_TIMEOUT_MS
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/cancelled|canceled|interrupted|Agent stopped/i.test(msg)) {
+        return; // user stop — not a hard error
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * User stop: cancel in-flight prompt, mute stream, kill agent process
+   * so tools/subagents halt. Next send restarts a clean session.
+   */
+  cancelTurn(): void {
+    this.streamMuted = true;
+    for (const [id, p] of this.pending) {
+      if (p.method === "session/prompt" || p.method === "session/cancel") {
+        clearTimeout(p.timer);
+        this.pending.delete(id);
+        p.reject(new Error("cancelled"));
+      }
+    }
+    // Best-effort ACP cancel before kill
+    if (this.sessionId && this.child?.stdin.writable) {
+      try {
+        this.child.stdin.write(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            method: "session/cancel",
+            params: { sessionId: this.sessionId },
+          }) + "\n"
+        );
+      } catch {
+        /* ignore */
+      }
+    }
+    // Hard stop process so shell tools / subagents actually die
+    this.stop();
+    this.emit("cancelled", { reason: "user" });
   }
 
   async newChat(): Promise<string> {
@@ -234,10 +307,14 @@ export class AcpClient extends EventEmitter {
       percentage,
     });
     try {
-      await this.request("session/prompt", {
-        sessionId: this.sessionId,
-        prompt: [{ type: "text", text }],
-      });
+      await this.request(
+        "session/prompt",
+        {
+          sessionId: this.sessionId,
+          prompt: [{ type: "text", text }],
+        },
+        ACP_PROMPT_TIMEOUT_MS
+      );
     } catch (e) {
       this.emit("compact", {
         phase: "error",
@@ -280,6 +357,7 @@ export class AcpClient extends EventEmitter {
 
   stop(): void {
     for (const [, p] of this.pending) {
+      clearTimeout(p.timer);
       p.reject(new Error("Agent stopped"));
     }
     this.pending.clear();
@@ -287,6 +365,8 @@ export class AcpClient extends EventEmitter {
     this.modelState = emptyModelState();
     this.contextUsage = { usedTokens: 0, totalTokens: 500_000 };
     this.availableCommands = [];
+    this.tasks.clear();
+    this.emit("tasks", this.tasks.snapshot());
     // Clear current child *before* kill so the async exit handler does not
     // treat a superseded process as live and wipe a newly spawned session.
     const prev = this.child;
@@ -314,16 +394,25 @@ export class AcpClient extends EventEmitter {
     }
     const cwd = workspaceCwd();
     const args = this.agentStdioArgs();
+    this.tasks.clear();
+    this.emit("tasks", this.tasks.snapshot());
     this.emit("status", `Starting ${binary} ${args.join(" ")}…`);
     // Do not emit permissionMode here — AgentProcess owns the UI source of
     // truth. Emitting ask when YOLO is off used to clobber "auto" after restart.
+
+    // Multi-agent: never pass --no-subagents; set GROK_SUBAGENTS from Warp setting.
+    const subagentsOn = getSubagentsEnabled();
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      GROK_SUBAGENTS: subagentsOn ? "1" : "0",
+    };
 
     let child: ChildProcessWithoutNullStreams;
     try {
       child = spawn(binary, args, {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env },
+        env,
         windowsHide: true,
       });
       this.child = child;
@@ -434,6 +523,9 @@ export class AcpClient extends EventEmitter {
       throw new Error("session/new did not return sessionId");
     }
     this.sessionId = sessionId;
+    // New parent session → fresh multi-agent board
+    this.tasks.clear();
+    this.emit("tasks", this.tasks.snapshot());
     const models = parseModelState(sess);
     if (models) {
       this.modelState = models;
@@ -446,10 +538,15 @@ export class AcpClient extends EventEmitter {
     this.emit("ready", {
       sessionId: this.sessionId,
       models: this.modelState,
+      tasks: this.tasks.snapshot(),
     });
   }
 
-  private request(method: string, params: unknown): Promise<unknown> {
+  private request(
+    method: string,
+    params: unknown,
+    timeoutMs: number = ACP_RPC_TIMEOUT_MS
+  ): Promise<unknown> {
     if (!this.child?.stdin.writable) {
       return Promise.reject(new Error("Agent stdin not writable"));
     }
@@ -457,14 +554,41 @@ export class AcpClient extends EventEmitter {
     const msg = { jsonrpc: "2.0", id, method, params };
     this.child.stdin.write(JSON.stringify(msg) + "\n");
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id);
-          reject(new Error(`ACP timeout: ${method}`));
-        }
-      }, 120_000);
+      const entry: Pending = {
+        resolve,
+        reject,
+        method,
+        timeoutMs,
+        timer: setTimeout(() => {
+          /* replaced by armTimeout */
+        }, 0),
+      };
+      this.pending.set(id, entry);
+      this.armTimeout(id, entry);
     });
+  }
+
+  private armTimeout(id: JsonRpcId, entry: Pending): void {
+    clearTimeout(entry.timer);
+    entry.timer = setTimeout(() => {
+      if (this.pending.get(id) === entry) {
+        this.pending.delete(id);
+        entry.reject(new Error(`ACP timeout: ${entry.method}`));
+      }
+    }, entry.timeoutMs);
+  }
+
+  /**
+   * Long turns (esp. multi-agent) keep streaming session/update while
+   * session/prompt is still open. Refresh the prompt deadline so we don't
+   * kill a healthy turn at 2 minutes.
+   */
+  private touchPromptTimeouts(): void {
+    for (const [id, p] of this.pending) {
+      if (p.method === "session/prompt") {
+        this.armTimeout(id, p);
+      }
+    }
   }
 
   private respond(id: JsonRpcId, result: unknown): void {
@@ -512,6 +636,7 @@ export class AcpClient extends EventEmitter {
       const p = this.pending.get(msg.id);
       if (p) {
         this.pending.delete(msg.id);
+        clearTimeout(p.timer);
         if (msg.error) {
           p.reject(
             new Error(msg.error.message || JSON.stringify(msg.error))
@@ -538,6 +663,7 @@ export class AcpClient extends EventEmitter {
     ) {
       // Grok puts live usage on params._meta.totalTokens
       this.noteTokensFromMeta(msg.params._meta);
+      this.touchPromptTimeouts();
       this.handleSessionUpdate(msg.params);
       return;
     }
@@ -559,6 +685,7 @@ export class AcpClient extends EventEmitter {
       method.endsWith("/session/update")
     ) {
       this.noteTokensFromMeta(params._meta);
+      this.touchPromptTimeouts();
       this.handleSessionUpdate(params);
       return;
     }
@@ -662,7 +789,28 @@ export class AcpClient extends EventEmitter {
     }
   }
 
+  private noteTaskFromTool(
+    update: Record<string, unknown>,
+    isStart: boolean
+  ): void {
+    try {
+      const hit = this.tasks.ingestToolUpdate(update, isStart);
+      if (!hit) return;
+      this.emit("task", {
+        event: hit.event,
+        task: hit.task,
+        snapshot: this.tasks.snapshot(),
+      });
+      this.emit("tasks", this.tasks.snapshot());
+    } catch {
+      /* multi-agent tracking must never break the chat stream */
+    }
+  }
+
   private handleSessionUpdate(params: Record<string, unknown>): void {
+    if (this.streamMuted) {
+      return;
+    }
     // Accept either { update: { sessionUpdate, ... } } or a flat update object
     const nested = params.update as Record<string, unknown> | undefined;
     const update =
@@ -693,7 +841,9 @@ export class AcpClient extends EventEmitter {
         this.emit("thought", { text });
       }
     } else if (kind === "tool_call" || kind === "tool_call_update") {
-      this.emit("tool", parseToolUpdate(update, kind === "tool_call"));
+      const isStart = kind === "tool_call";
+      this.emit("tool", parseToolUpdate(update, isStart));
+      this.noteTaskFromTool(update, isStart);
     } else if (kind === "model_changed" || kind === "current_mode_update") {
       this.modelState = applyModelChanged(this.modelState, update);
       this.emit("models", this.modelState);

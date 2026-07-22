@@ -1,48 +1,57 @@
-# Warp Pro billing (Stripe)
+# Warp Pro — production license (Neon + Redis + Stripe + Ably)
 
-## Model
-- **7-day free trial** — local (extension `globalState`), starts on first message
-- **$5 USD / month** — Stripe Checkout subscription
-- **No Neon** — Pro status is checked live via Stripe by billing email
+## Architecture (paid SaaS)
 
-## Env (Vercel → Project → Settings → Environment Variables)
+| Layer | Role |
+|---|---|
+| **Stripe** | Money, subscriptions, portal |
+| **Neon** (`warp_licenses`) | Source of truth for trial + stripe ids |
+| **Redis / Upstash** | 120s cache of license snapshot (optional but recommended) |
+| **Ably** | Push plan changes to extension (no Refresh) |
+| **Extension** | **Every send** calls `GET /api/license` — never trusts local trial alone |
 
+## Env (Vercel project `warp`)
+
+### Required
 ```
-STRIPE_SECRET_KEY=sk_test_...   # then sk_live_ when ready
-STRIPE_PRICE_ID=price_...       # must match key mode (test vs live)
-STRIPE_PRODUCT_ID=prod_...
+DATABASE_URL=...              # Neon pooler (already on project)
+STRIPE_SECRET_KEY=
+STRIPE_PRICE_ID=
+STRIPE_PRODUCT_ID=
+STRIPE_WEBHOOK_SECRET=
+ABLY_API_KEY=
 APP_URL=https://warpte.com
-STRIPE_WEBHOOK_SECRET=whsec_... # after webhook endpoint exists
-ABLY_API_KEY=appId.keyId:keySecret  # realtime Pro unlock (optional but recommended)
 ```
 
-## Ably (no manual Refresh)
-1. Create free app at https://ably.com  
-2. Copy **Root** API key → Vercel `ABLY_API_KEY`  
-3. Redeploy  
-4. Stripe webhook publishes to channel `warp:install:{installId}`  
-5. Extension also **polls** license for 5 minutes after opening Checkout (works even without Ably)
+### Recommended (Redis)
+Link **Vercel KV** or **Upstash Redis** to the warp project:
+```
+KV_REST_API_URL=
+KV_REST_API_TOKEN=
+# or
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+```
+Without Redis, Neon alone still works (slightly more DB load).
 
-
-## Test vs Live price IDs
-Stripe **Test** and **Live** have different `price_` IDs.  
-If checkout returns `No such price`, open Stripe **Test mode**, create the same $5/mo price, and set that `STRIPE_PRICE_ID`.
+## Trial rules
+- 7 days from **first** `startTrial=1` for that `install_id` (server clock)
+- Stored as `trial_started_at` / `trial_ends_at` in Neon
+- Clearing local extension storage does **not** reset trial for same installId
+- New machine = new installId = new trial (optional harden: bind trial to email after first identity)
 
 ## API
 | Route | Purpose |
 |---|---|
-| `POST /api/stripe/checkout` | `{ email, installId? }` → Checkout URL |
-| `POST /api/stripe/portal` | `{ email }` → Customer Portal |
-| `GET /api/license?email=` | `{ pro, status, ... }` |
-| `POST /api/stripe/webhook` | Stripe events (ack only) |
+| `GET /api/license?installId=&email=&startTrial=1` | Resolve allow/deny |
+| `POST /api/stripe/webhook` | Sync Pro / cancel → Neon + Redis + Ably |
+| `POST /api/stripe/checkout` | Checkout (metadata installId + email) |
+| `POST /api/stripe/portal` | Customer portal |
+| `GET /api/ably/token?installId=` | Realtime token |
 
-## Webhook
-1. Deploy site
-2. Stripe Dashboard → Developers → Webhooks → Add endpoint  
-   `https://warpte.com/api/stripe/webhook`
-3. Events: `checkout.session.completed`, `customer.subscription.*`, `invoice.paid`, `invoice.payment_failed`
-4. Copy signing secret → `STRIPE_WEBHOOK_SECRET`
-
-## Extension
-Settings → Account → **Subscribe** / **Refresh** / **Manage billing**  
-Setting `warp.billingApiBase` (default `https://warpte.com`)
+## Deploy
+```bash
+cd warp-api
+npm install
+vercel --prod
+```

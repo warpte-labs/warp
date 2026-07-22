@@ -7,10 +7,16 @@ export type ToolUiEvent = {
   kind: string;
   target: string;
   label: string;
+  /** When Grok tags a tool as belonging to a child agent */
+  subagentId?: string;
+  subagentType?: string;
+  /** True when this is spawn_subagent / Task tool (parent-level) */
+  isSpawn?: boolean;
 };
 
 /**
  * Prefer paths/commands over opaque call-* ids.
+ * Also parse Grok subagent titles: `[subagent:explore] Title (id)`.
  */
 export function parseToolUpdate(
   update: Record<string, unknown>,
@@ -58,13 +64,129 @@ export function parseToolUpdate(
     title = kind && !looksLikeCallId(kind) ? kind : "tool";
   }
 
+  const tagged = parseSubagentTag(rawTitle) || parseSubagentTag(title);
+  if (tagged?.cleanTitle) {
+    title = tagged.cleanTitle;
+  }
+
+  const nameLower = (
+    kind +
+    " " +
+    String(xaiTool?.name || "") +
+    " " +
+    String(xaiTool?.label || "") +
+    " " +
+    rawTitle
+  ).toLowerCase();
+  const inputLooksSpawn = !!(
+    rawInput &&
+    (typeof rawInput.subagent_type === "string" ||
+      typeof rawInput.subagentType === "string" ||
+      (typeof rawInput.prompt === "string" &&
+        typeof rawInput.description === "string" &&
+        String(rawInput.prompt).length > 20))
+  );
+  const isSpawn =
+    nameLower.includes("spawn_subagent") ||
+    nameLower.includes("spawn_agent") ||
+    /\btask_tool\b/.test(nameLower) ||
+    (nameLower.includes("subagent") && nameLower.includes("spawn")) ||
+    inputLooksSpawn;
+
+  let subagentId =
+    tagged?.id ||
+    (typeof rawInput?.subagent_id === "string"
+      ? rawInput.subagent_id
+      : undefined) ||
+    (typeof rawInput?.task_id === "string" ? rawInput.task_id : undefined);
+  let subagentType =
+    tagged?.type ||
+    (typeof rawInput?.subagent_type === "string"
+      ? rawInput.subagent_type
+      : undefined);
+
+  // Spawn description often is the human title
+  if (isSpawn && rawInput && typeof rawInput.description === "string") {
+    title = rawInput.description.trim() || title;
+  }
+
+  // Poll / wait / kill background task — never leave title as bare "tool"
+  const pollLike =
+    nameLower.includes("get_command_or_subagent") ||
+    nameLower.includes("get_task_output") ||
+    nameLower.includes("task output") ||
+    nameLower.includes("wait_command") ||
+    nameLower.includes("wait_task") ||
+    /background\s*task/i.test(rawTitle) ||
+    /get task output/i.test(rawTitle);
+  if (pollLike) {
+    const tid =
+      subagentId ||
+      (typeof rawInput?.task_id === "string" ? rawInput.task_id : "") ||
+      (typeof rawInput?.taskId === "string" ? rawInput.taskId : "") ||
+      extractIdFromTitle(rawTitle);
+    title = tid
+      ? `Checking agent ${String(tid).slice(0, 8)}…`
+      : "Checking agents…";
+    if (!target && tid) target = String(tid).slice(0, 8);
+  }
+
+  // ACP sometimes sends kind/title literally "tool"
+  if (!title || title.toLowerCase() === "tool" || looksLikeCallId(title)) {
+    if (target) title = target;
+    else if (kind && kind.toLowerCase() !== "tool") title = kind;
+    else title = isStart ? "Working…" : "Done";
+  }
+
   return {
     id,
     title,
     status: status || (isStart ? "in_progress" : "completed"),
-    kind,
+    kind: pollLike ? "get_command_or_subagent_output" : kind,
     target,
     label: title,
+    subagentId: subagentId || undefined,
+    subagentType: subagentType || undefined,
+    isSpawn: isSpawn || undefined,
+  };
+}
+
+function extractIdFromTitle(title: string): string {
+  const m = String(title || "").match(
+    /([0-9a-f]{8}-[0-9a-f-]{20,}|[0-9a-f]{8,})/i
+  );
+  return m?.[1] || "";
+}
+
+/**
+ * Grok titles: `[subagent:explore] Explore codebase structure (019f8b30)`
+ */
+export function parseSubagentTag(text: string): {
+  type?: string;
+  id?: string;
+  cleanTitle: string;
+} | null {
+  const s = String(text || "").trim();
+  if (!s) return null;
+  const m = s.match(
+    /^\[subagent:([^\]]+)\]\s*(.*?)\s*(?:\(([0-9a-f-]{8,})\))?\s*$/i
+  );
+  if (!m) {
+    // Also match mid-string tags
+    const m2 = s.match(
+      /\[subagent:([^\]]+)\]\s*([^(\n]*?)(?:\(([0-9a-f-]{8,})\))?/i
+    );
+    if (!m2) return null;
+    return {
+      type: m2[1]?.trim() || undefined,
+      id: m2[3]?.trim() || undefined,
+      cleanTitle: (m2[2] || "").trim() || s,
+    };
+  }
+  return {
+    type: m[1]?.trim() || undefined,
+    id: m[3]?.trim() || undefined,
+    cleanTitle: (m[2] || "").trim() || s,
   };
 }
 

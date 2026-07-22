@@ -7,12 +7,20 @@ import * as path from "path";
 import type { AgentProcess } from "./agentProcess";
 import type { PromptAttachment } from "./acp/promptContent";
 import { appendMentionRefs } from "./acp/promptContent";
+import { renameSession } from "./sessionHistory";
+import { parseUsageRange } from "./usageStats";
 import {
-  listLocalSessions,
-  readSessionTranscript,
-  renameSession,
-} from "./sessionHistory";
-import { getUsageSnapshot, parseUsageRange } from "./usageStats";
+  usageSetRange,
+  usageSubscribe,
+  usageUnsubscribe,
+} from "./usageLive";
+import {
+  historyNudge,
+  historySubscribe,
+  historyUnsubscribe,
+  historyUnwatchDetail,
+  historyWatchDetail,
+} from "./historyLive";
 import { listWorkspaceFiles } from "./workspaceFiles";
 import { resolveSafePath } from "./security/paths";
 import {
@@ -30,6 +38,7 @@ import {
   getSandboxProfile,
   getScrollWithStream,
   getShowThinking,
+  getSubagentsEnabled,
   setAutoCompactPercent,
   setBinaryPath,
   setDefaultCwd,
@@ -39,6 +48,7 @@ import {
   setSandboxProfile,
   setScrollWithStream,
   setShowThinking,
+  setSubagentsEnabled,
 } from "./config";
 import { errMsg } from "./util";
 import { getAuthStatus } from "./auth";
@@ -58,14 +68,30 @@ import {
   startCheckout,
 } from "./license";
 
-/** Push plan fields into settings when Ably/poll unlocks Pro. */
+/** Push plan fields into settings + composer license banner when plan changes. */
 let licenseUiWired = false;
+function pushLicenseToWebview(ctx: MessageContext): void {
+  const st = getLicenseStatusLocal();
+  ctx.post({
+    type: "license",
+    kind: st.kind,
+    label: st.label,
+    detail: st.detail,
+    allowed: st.allowed,
+    pro: st.pro,
+    trialDaysLeft: st.trialDaysLeft,
+    billingEmail: st.billingEmail,
+  });
+}
 function ensureLicenseUiBridge(ctx: MessageContext): void {
   if (licenseUiWired) return;
   licenseUiWired = true;
   onLicenseChange(() => {
     postSettings(ctx);
+    pushLicenseToWebview(ctx);
   });
+  // Initial banner state
+  pushLicenseToWebview(ctx);
 }
 
 export type PostFn = (message: unknown) => void;
@@ -104,6 +130,9 @@ export async function handleWebviewMessage(
     case "prompt":
       await handlePrompt(msg, ctx);
       return;
+    case "cancel":
+      handleCancel(ctx);
+      return;
     case "newChat":
       await handleNewChat(ctx);
       return;
@@ -113,11 +142,26 @@ export async function handleWebviewMessage(
     case "listHistory":
       handleListHistory(ctx);
       return;
+    case "historySubscribe":
+      historySubscribe(ctx.post, ctx.log);
+      return;
+    case "historyUnsubscribe":
+      historyUnsubscribe();
+      return;
     case "getHistory":
       handleGetHistory(msg, ctx);
       return;
+    case "listTasks":
+      handleListTasks(ctx);
+      return;
     case "getUsage":
       handleGetUsage(msg, ctx);
+      return;
+    case "usageSubscribe":
+      usageSubscribe(msg.range, ctx.post, ctx.log);
+      return;
+    case "usageUnsubscribe":
+      usageUnsubscribe();
       return;
     case "setModel":
       await handleSetModel(msg, ctx);
@@ -150,8 +194,7 @@ export async function handleWebviewMessage(
       postSettings(ctx);
       return;
     case "syncPlan":
-      // Account screen opened — drop stale Pro cache and re-check Stripe
-      await clearProCache();
+      // Soft re-check — do NOT clear cache first (that flickered "Checking…")
       await refreshProFromServer();
       postSettings(ctx);
       return;
@@ -233,6 +276,10 @@ function postSettings(
       typeof overrides.mockMode === "boolean"
         ? overrides.mockMode
         : getMockMode(),
+    subagentsEnabled:
+      typeof overrides.subagentsEnabled === "boolean"
+        ? overrides.subagentsEnabled
+        : getSubagentsEnabled(),
     resolvedBinary: resolved,
     binaryAvailable: binaryLooksAvailable(resolved),
     signedIn: auth.signedIn,
@@ -333,6 +380,15 @@ async function handleUpdateSetting(
         type: "toast",
         text: on ? "Mock mode on" : "Mock mode off",
       });
+    } else if (key === "subagentsEnabled") {
+      const on = coerceBool(msg.value, true);
+      overrides.subagentsEnabled = await setSubagentsEnabled(on);
+      ctx.post({
+        type: "toast",
+        text: on
+          ? "Subagents on (restart agent to apply)"
+          : "Subagents off (restart agent to apply)",
+      });
     } else {
       ctx.post({ type: "toast", text: "Unknown setting" });
       return;
@@ -359,25 +415,6 @@ async function handleSettingsAction(
     }
     if (action === "subscribe") {
       await startCheckout();
-      postSettings(ctx);
-      return;
-    }
-    if (action === "refreshPlan") {
-      ctx.post({ type: "toast", text: "Checking subscription…" });
-      // Drop local cache so cancel / retest is visible immediately
-      await clearProCache();
-      await refreshProFromServer();
-      const st = getLicenseStatusLocal();
-      ctx.post({
-        type: "toast",
-        text: st.pro
-          ? "Warp Pro active — thank you!"
-          : st.kind === "trial"
-            ? `Trial: ${st.detail}`
-            : st.kind === "none"
-              ? "No Pro yet — trial starts on first message"
-              : "No active subscription for that email yet.",
-      });
       postSettings(ctx);
       return;
     }
@@ -413,6 +450,17 @@ function coerceBool(value: unknown, fallback: boolean): boolean {
   return !!value;
 }
 
+function handleCancel(ctx: MessageContext): void {
+  try {
+    ctx.agent.cancelTurn();
+    ctx.log?.("[chat] user stop / cancel");
+  } catch (err) {
+    ctx.log?.(`[chat] cancel error ${errMsg(err)}`);
+    ctx.post({ type: "cancelled" });
+    ctx.post({ type: "turn", phase: "end" });
+  }
+}
+
 async function handlePrompt(
   msg: Record<string, unknown>,
   ctx: MessageContext
@@ -421,11 +469,15 @@ async function handlePrompt(
 
   const gate = await assertCanUseAgent();
   if (!gate.ok) {
+    const text =
+      gate.message ||
+      "Free trial expired — upgrade to Pro ($5/mo) to keep chatting.";
+    // White chat reply + upgrade button; banner above input via license event
     ctx.post({
-      type: "error",
-      text:
-        gate.message ||
-        "Trial ended. Open Settings → Account to subscribe ($5/mo).",
+      type: "notice",
+      text,
+      action: "subscribe",
+      actionLabel: "Upgrade",
     });
     ctx.post({ type: "license", ...gate.status });
     ctx.post({ type: "turn", phase: "end" });
@@ -444,8 +496,15 @@ async function handlePrompt(
   }
   try {
     await ctx.agent.sendPrompt(promptText, attachments);
+    historyNudge("turnEnd");
   } catch (err) {
-    ctx.post({ type: "error", text: errMsg(err) });
+    const message = errMsg(err);
+    if (/cancelled|canceled|interrupted|Agent stopped/i.test(message)) {
+      ctx.post({ type: "cancelled" });
+      ctx.post({ type: "turn", phase: "end" });
+      return;
+    }
+    ctx.post({ type: "error", text: message });
     ctx.post({ type: "turn", phase: "end" });
   }
 }
@@ -466,6 +525,7 @@ async function handleNewChat(ctx: MessageContext): Promise<void> {
       `[chat] newChat ${sessionId ? sessionId.slice(0, 8) + "…" : "(ui only)"}`
     );
     ctx.post({ type: "chatCleared", sessionId });
+    historyNudge("newChat");
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     ctx.log?.(`[chat] newChat error ${message}`);
@@ -490,14 +550,34 @@ async function handleListFiles(
 }
 
 function handleListHistory(ctx: MessageContext): void {
+  // Keep / re-start live subscription and force one list push
   try {
-    const sessions = listLocalSessions(100);
-    ctx.log?.(`[history] listed ${sessions.length} sessions`);
-    ctx.post({ type: "historyList", sessions });
+    historySubscribe(ctx.post, ctx.log);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     ctx.log?.(`[history] list error ${message}`);
     ctx.post({ type: "historyError", text: message });
+  }
+}
+
+/** Multi-agent board snapshot (subagents, bg commands, monitors). */
+function handleListTasks(ctx: MessageContext): void {
+  try {
+    const snapshot = ctx.agent.getTasksSnapshot();
+    ctx.log?.(
+      `[tasks] listed ${snapshot.tasks.length} (running=${snapshot.running})`
+    );
+    ctx.post({ type: "tasks", ...snapshot });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    ctx.log?.(`[tasks] list error ${message}`);
+    ctx.post({
+      type: "tasks",
+      tasks: [],
+      running: 0,
+      updatedAt: Date.now(),
+      error: message,
+    });
   }
 }
 
@@ -507,12 +587,12 @@ function handleGetUsage(
 ): void {
   const range = parseUsageRange(msg.range);
   try {
-    const t0 = Date.now();
-    const snap = getUsageSnapshot(80, range);
-    ctx.log?.(
-      `[usage] range=${range} sessions=${snap.totals.sessions} tokens=${snap.totals.tokens} days=${snap.daily.length} ms=${Date.now() - t0}`
-    );
-    ctx.post({ type: "usage", ...snap });
+    // Subscribe + immediate snapshot (live updates while Usage is open)
+    if (msg.rangeOnly === true) {
+      usageSetRange(range);
+    } else {
+      usageSubscribe(range, ctx.post, ctx.log);
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     ctx.log?.(`[usage] error ${message}`);
@@ -549,17 +629,8 @@ function handleGetHistory(
   if (typeof msg.sessionId !== "string") {
     return;
   }
-  try {
-    const { session, messages } = readSessionTranscript(msg.sessionId, 250);
-    ctx.log?.(
-      `[history] detail ${msg.sessionId.slice(0, 8)}… msgs=${messages.length}`
-    );
-    ctx.post({ type: "historyDetail", session, messages });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    ctx.log?.(`[history] detail error ${message}`);
-    ctx.post({ type: "historyError", text: message });
-  }
+  // One-shot + keep watching this session while detail is open
+  historyWatchDetail(msg.sessionId, ctx.post, ctx.log);
 }
 
 async function warmModels(ctx: MessageContext): Promise<void> {
@@ -872,8 +943,7 @@ async function handleRenameSession(
     return;
   }
   ctx.post({ type: "toast", text: `Renamed to “${result.title}”` });
-  // Refresh history list if open
-  handleListHistory(ctx);
+  historyNudge("rename");
 }
 
 async function handleSetModel(

@@ -6,6 +6,8 @@ import {
   type ContextUsage,
   type ModelState,
   type PromptAttachment,
+  type TasksSnapshot,
+  type WarpTask,
 } from "./acpClient";
 import { getAuthStatus } from "./auth";
 import {
@@ -24,6 +26,8 @@ import { confirmEnableYolo } from "./security/permissions";
  *   thought  { text }              — ACP agent_thought_chunk (delta)
  *   message  { text }              — ACP agent_message_chunk (delta)
  *   tool     { id, title, status }
+ *   task     { event, task, snapshot } — multi-agent lifecycle (subagent/bg)
+ *   tasks    TasksSnapshot         — full board snapshot
  *   turn     { phase: "start" | "end" }
  *   models   ModelState
  *   context  ContextUsage
@@ -56,6 +60,8 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
     this.acp.on("thought", (p: { text: string }) => this.emit("thought", p));
     this.acp.on("message", (p: { text: string }) => this.emit("message", p));
     this.acp.on("tool", (p: unknown) => this.emit("tool", p));
+    this.acp.on("task", (p: unknown) => this.emit("task", p));
+    this.acp.on("tasks", (p: TasksSnapshot) => this.emit("tasks", p));
     this.acp.on("status", (t: string) => this.emit("status", t));
     this.acp.on("stderr", (t: string) => this.emit("stderr", t));
     this.acp.on("error", (t: string) => this.emit("error", t));
@@ -83,6 +89,14 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
 
   getAvailableCommands(): AvailableCommand[] {
     return this.acp.getAvailableCommands();
+  }
+
+  getTasksSnapshot(): TasksSnapshot {
+    return this.acp.getTasksSnapshot();
+  }
+
+  getTask(id: string): WarpTask | undefined {
+    return this.acp.getTask(id);
   }
 
   getAlwaysApprove(): boolean {
@@ -246,6 +260,11 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
   async newChat(): Promise<string | null> {
     if (this.mockMode()) {
       this.emit("status", "New chat (mock)");
+      this.emit("tasks", {
+        tasks: [],
+        running: 0,
+        updatedAt: Date.now(),
+      } satisfies TasksSnapshot);
       return "mock";
     }
     const auth = getAuthStatus();
@@ -256,6 +275,7 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
     }
     const id = await this.acp.newChat();
     this.emit("status", `New chat ${id.slice(0, 8)}…`);
+    this.emit("tasks", this.acp.getTasksSnapshot());
     return id;
   }
 
@@ -326,6 +346,30 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
     return this.acp.setModel(modelId, reasoningEffort);
   }
 
+  /**
+   * User stop — cancel prompt/tools/subagents; UI shows "Agent interrupted".
+   */
+  cancelTurn(): void {
+    if (this.mockMode()) {
+      this.turnActive = false;
+      this.emit("cancelled", { reason: "user" });
+      this.emit("turn", { phase: "end" });
+      return;
+    }
+    try {
+      this.acp.cancelTurn();
+    } catch {
+      try {
+        this.acp.stop();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.turnActive = false;
+    this.emit("cancelled", { reason: "user" });
+    this.emit("turn", { phase: "end" });
+  }
+
   async sendPrompt(
     text: string,
     attachments?: PromptAttachment[]
@@ -347,13 +391,21 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
     try {
       await this.ensureStarted();
       await this.acp.prompt(text, attachments);
-      this.turnActive = false;
-      this.emit("turn", { phase: "end" });
-      void this.maybeAutoCompact();
+      // cancelTurn may already have ended the turn
+      if (this.turnActive) {
+        this.turnActive = false;
+        this.emit("turn", { phase: "end" });
+        void this.maybeAutoCompact();
+      }
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
-      this.emit("error", message);
       this.turnActive = false;
+      if (/cancelled|canceled|interrupted|Agent stopped/i.test(message)) {
+        // cancelTurn already emitted cancelled + turn end
+        this.emit("turn", { phase: "end" });
+        return;
+      }
+      this.emit("error", message);
       this.emit("turn", { phase: "end" });
       throw e;
     }

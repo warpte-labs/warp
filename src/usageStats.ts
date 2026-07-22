@@ -79,9 +79,11 @@ export function getUsageSnapshot(
   range: UsageRange = "30d"
 ): UsageSnapshot {
   const auth = getAuthStatus();
+  // Token index is mtime-cached; sessions lite is TTL-cached (~8s).
   const tokenIndex = readTokenUsageFromLog();
-  const sessionSum = listSessionsLite(Math.max(limit, 80));
   const credits = readBillingCreditsFromLog();
+  // Only need enough sessions for the table (not full history walk every time)
+  const sessionSum = listSessionsLite(Math.max(limit, 40));
 
   const series = buildTokenSeries(tokenIndex.byDay, range);
   const daily = buildDailyRows(tokenIndex.byDay, range);
@@ -97,6 +99,9 @@ export function getUsageSnapshot(
   const rangePrompt = daily.reduce((a, d) => a + d.promptTokens, 0);
   const rangeCompletion = daily.reduce((a, d) => a + d.completionTokens, 0);
   const rangeReasoning = daily.reduce((a, d) => a + d.reasoningTokens, 0);
+  // Prefer range sums; fall back only when range has no daily rows at all
+  // (do not use `||` — rangeTokens===0 is valid and used to show empty days)
+  const useRange = daily.length > 0;
 
   return {
     signedIn: auth.signedIn,
@@ -107,12 +112,12 @@ export function getUsageSnapshot(
       toolCalls: 0,
       contextTokensPeak: 0,
       models: [],
-      tokens: rangeTokens || tt.totalTokens,
-      promptTokens: rangePrompt || tt.promptTokens,
-      completionTokens: rangeCompletion || tt.completionTokens,
-      reasoningTokens: rangeReasoning || tt.reasoningTokens,
+      tokens: useRange ? rangeTokens : tt.totalTokens,
+      promptTokens: useRange ? rangePrompt : tt.promptTokens,
+      completionTokens: useRange ? rangeCompletion : tt.completionTokens,
+      reasoningTokens: useRange ? rangeReasoning : tt.reasoningTokens,
       uncachedPromptTokens: tt.uncachedPromptTokens,
-      inferenceTurns: rangeTurns || tt.turns,
+      inferenceTurns: useRange ? rangeTurns : tt.turns,
     },
     series,
     daily,
@@ -191,7 +196,16 @@ function formatWhen(iso: string): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-function rangeStartEnd(range: UsageRange): { start: Date; end: Date } {
+/**
+ * Inclusive local calendar range for chart/daily rows.
+ * endDay is the last calendar day key to include (usually today).
+ */
+function rangeStartEnd(range: UsageRange): {
+  start: Date;
+  end: Date;
+  startKey: string;
+  endKey: string;
+} {
   const now = new Date();
   const end = startOfDay(now);
   const days = RANGE_DAYS[range];
@@ -203,21 +217,30 @@ function rangeStartEnd(range: UsageRange): { start: Date; end: Date } {
   } else {
     start = addDays(end, -(days - 1));
   }
-  return { start: startOfDay(start), end };
+  start = startOfDay(start);
+  return {
+    start,
+    end,
+    startKey: dayKey(start),
+    endKey: dayKey(end),
+  };
+}
+
+/** Compare YYYY-MM-DD keys (local calendar). Inclusive. */
+function dayInRange(day: string, startKey: string, endKey: string): boolean {
+  return day >= startKey && day <= endKey;
 }
 
 function buildDailyRows(
   byDay: Map<string, TokenTotals>,
   range: UsageRange
 ): UsageDayRow[] {
-  const { start, end } = rangeStartEnd(range);
+  const { startKey, endKey } = rangeStartEnd(range);
   const rows: UsageDayRow[] = [];
   for (const [day, tok] of byDay) {
     if (!tok.totalTokens && !tok.turns) continue;
-    const t = Date.parse(day + "T12:00:00");
-    if (!Number.isFinite(t)) continue;
-    const dt = new Date(t);
-    if (dt < start || dt > end) continue;
+    // String compare on local day keys — never drop "today" via Date > startOfDay
+    if (!dayInRange(day, startKey, endKey)) continue;
     rows.push({
       day,
       label: formatDayLabel(day),
@@ -242,7 +265,7 @@ function buildTokenSeries(
   byDay: Map<string, TokenTotals>,
   range: UsageRange
 ): UsageSeries {
-  const { start, end } = rangeStartEnd(range);
+  const { start, end, startKey, endKey } = rangeStartEnd(range);
   const bucket: "day" | "week" | "month" =
     range === "90d" ? "week" : range === "12m" || range === "all" ? "month" : "day";
 
@@ -276,12 +299,13 @@ function buildTokenSeries(
   }
 
   for (const [day, tok] of byDay) {
-    const t = Date.parse(day + "T12:00:00");
-    if (!Number.isFinite(t)) continue;
-    const dt = new Date(t);
-    if (dt < start || dt > end) continue;
+    // Inclusive calendar compare — old code used dt > startOfDay(today)
+    // which dropped all of *today* (parsed as noon > midnight).
+    if (!dayInRange(day, startKey, endKey)) continue;
+    const dt = parseDayKey(day);
+    if (!dt) continue;
     let k: string;
-    if (bucket === "day") k = dayKey(dt);
+    if (bucket === "day") k = day;
     else if (bucket === "week") k = dayKey(startOfWeek(dt));
     else k = monthKey(dt);
     if (!map.has(k)) continue;
@@ -292,6 +316,17 @@ function buildTokenSeries(
   const values = keys.map((k) => map.get(k) || 0);
 
   return { range, labels, values, unit: "tokens" };
+}
+
+/** Parse YYYY-MM-DD as local calendar date (noon to avoid DST edges). */
+function parseDayKey(day: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  if (!y || !mo || !d) return null;
+  return new Date(y, mo - 1, d, 12, 0, 0, 0);
 }
 
 function formatLabel(key: string, bucket: "day" | "week" | "month"): string {

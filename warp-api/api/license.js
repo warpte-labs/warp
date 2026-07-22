@@ -1,14 +1,12 @@
 /**
- * GET /api/license?email=
- * → { ok, pro, status, email, subscriptionId?, currentPeriodEnd? }
+ * GET /api/license?installId=&email=&startTrial=1
  *
- * Source of truth: Stripe (active/trialing sub on Warp price/product).
- * No Neon / DB required.
+ * Production license check (Neon + Redis + Stripe).
+ * Extension MUST call this before every agent turn.
  */
-import {
-  findActiveSubscription,
-  findCustomerByEmail,
-} from "../lib/stripe.js";
+import { dbConfigured } from "../lib/db.js";
+import { resolveLicense } from "../lib/licenseStore.js";
+import { redisConfigured } from "../lib/redis.js";
 
 function cors(res) {
   res.setHeader("Content-Type", "application/json");
@@ -30,72 +28,49 @@ export default async function handler(req, res) {
   }
 
   try {
-    if (!process.env.STRIPE_SECRET_KEY) {
+    if (!dbConfigured()) {
       res.statusCode = 503;
       return res.end(
-        JSON.stringify({ ok: false, error: "Stripe not configured", pro: false })
+        JSON.stringify({
+          ok: false,
+          allowed: false,
+          error: "DATABASE_URL not configured",
+        })
       );
     }
 
     const url = new URL(req.url || "/", "http://localhost");
-    // Vercel may pass query on req.query
-    const email = String(
-      (req.query && req.query.email) || url.searchParams.get("email") || ""
-    )
-      .trim()
-      .toLowerCase();
+    const q = req.query || {};
+    const installId = String(
+      q.installId || url.searchParams.get("installId") || ""
+    ).trim();
+    const email = String(q.email || url.searchParams.get("email") || "").trim();
+    const startTrial =
+      String(q.startTrial || url.searchParams.get("startTrial") || "") ===
+        "1" ||
+      String(q.startTrial || url.searchParams.get("startTrial") || "") ===
+        "true";
 
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      res.statusCode = 400;
-      return res.end(
-        JSON.stringify({ ok: false, error: "email query required", pro: false })
-      );
-    }
-
-    const customer = await findCustomerByEmail(email);
-    if (!customer) {
-      res.statusCode = 200;
-      return res.end(
-        JSON.stringify({
-          ok: true,
-          pro: false,
-          status: "none",
-          email,
-        })
-      );
-    }
-
-    const sub = await findActiveSubscription(customer.id);
-    if (!sub) {
-      res.statusCode = 200;
-      return res.end(
-        JSON.stringify({
-          ok: true,
-          pro: false,
-          status: "none",
-          email,
-          customerId: customer.id,
-        })
-      );
-    }
+    const lic = await resolveLicense({ installId, email, startTrial });
 
     res.statusCode = 200;
     return res.end(
       JSON.stringify({
         ok: true,
-        pro: true,
-        status: sub.status || "active",
-        email,
-        customerId: customer.id,
-        subscriptionId: sub.id,
-        currentPeriodEnd: sub.current_period_end || null,
+        ...lic,
+        redis: redisConfigured(),
       })
     );
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "License check failed";
-    res.statusCode = 500;
+    console.error("[license]", e);
+    const status = e && e.status ? e.status : 500;
+    res.statusCode = status;
     return res.end(
-      JSON.stringify({ ok: false, error: msg, pro: false })
+      JSON.stringify({
+        ok: false,
+        allowed: false,
+        error: e instanceof Error ? e.message : "License error",
+      })
     );
   }
 }

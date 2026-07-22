@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Warp · multi-agent mockups</title>
+<style>
+:root {
+  --pane: #141414;
+  --elev: #1a1a1a;
+  --text: #e1e1e1;
+  --muted: #9a9a9a;
+  --dim: #6e6e6e;
+  --orange: #ff5a00;
+  --mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+  --sans: "Segoe UI", system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--sans);
+  background: #060606;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; }
+
+.top {
+  flex-shrink: 0;
+  background: #0e0e0e;
+  border-bottom: 1px solid #1a1a1a;
+  padding: 10px 14px 0;
+}
+.top-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.brand {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  color: #c8c8c8;
+}
+.brand span { color: var(--dim); font-weight: 500; letter-spacing: 0; }
+.actions { display: flex; gap: 8px; }
+.btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid #2a2a2a;
+  background: #161616;
+  color: #c8c8c8;
+}
+.btn:hover { background: #1c1c1c; color: #fff; }
+.btn.primary {
+  border-color: #4a2a18;
+  background: #1c1410;
+  color: #ffc9a8;
+}
+.btn:disabled { opacity: 0.4; cursor: default; }
+
+.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: thin; }
+.tab {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  padding: 8px 11px 10px;
+  color: var(--dim);
+  border-radius: 7px 7px 0 0;
+  position: relative;
+}
+.tab:hover { color: #bbb; background: #121212; }
+.tab.on { color: var(--text); background: #111; }
+.tab.on::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 2px;
+  background: var(--orange);
+}
+.tab .n { display: block; font-size: 9px; color: #555; margin-bottom: 1px; }
+.tab.on .n { color: #888; }
+.tab .rec { color: var(--orange); font-size: 9px; }
+
+.stage { flex: 1; min-height: 0; display: grid; grid-template-rows: auto 1fr; }
+.meta { padding: 11px 16px 8px; border-bottom: 1px solid #161616; }
+.meta h2 { margin: 0; font-family: var(--mono); font-size: 12.5px; font-weight: 650; }
+.meta p {
+  margin: 3px 0 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--dim);
+  line-height: 1.45;
+  max-width: 720px;
+}
+.viewport {
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  justify-content: center;
+  padding: 16px 14px 24px;
+}
+
+.pane {
+  width: min(400px, 100%);
+  height: min(640px, calc(100vh - 150px));
+  background: var(--pane);
+  border: 1px solid #242428;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pane-hd {
+  flex-shrink: 0;
+  padding: 9px 12px;
+  border-bottom: 1px solid #222;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pane-hd i {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--orange);
+}
+.feed {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.pane-ft {
+  flex-shrink: 0;
+  padding: 9px 12px;
+  border-top: 1px solid #222;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--dim);
+}
+
+.u { margin: 0 0 12px; }
+.u .w { color: var(--muted); font-size: 11px; margin-bottom: 3px; }
+.u .b {
+  background: var(--elev);
+  border: 1px solid #28282c;
+  border-radius: 9px;
+  padding: 8px 10px;
+  color: #d0d0d0;
+}
+.who {
+  color: var(--orange);
+  font-size: 11px;
+  font-weight: 650;
+  margin: 10px 0 4px;
+}
+.msg { color: #d0d0d0; margin: 0 0 10px; }
+.fade { animation: in 0.18s ease; }
+@keyframes in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* fill circle only — identity color, no container stripe */
+.fill {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ac, #7aa2f7);
+  position: relative;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--ac, #7aa2f7);
+  transform: scale(0.3);
+}
+.fill.run::after { animation: fg 1.6s ease-in-out infinite alternate; }
+.fill.done::after { transform: scale(0.85); animation: none; opacity: 0.7; }
+@keyframes fg {
+  from { transform: scale(0.15); }
+  to { transform: scale(0.88); }
+}
+
+/* Accordion — flat, no left accent, closed by default */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 8px 0 12px;
+}
+.acc {
+  border: 1px solid #2a2a2e;
+  border-radius: 8px;
+  background: #161616;
+  overflow: hidden;
+}
+.acc.done { opacity: 0.95; }
+.acc-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.acc-h:hover { background: #191919; }
+.acc-h .title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  color: #e0e0e0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Far right: time · Done */
+.acc-h .meta {
+  font-size: 10.5px;
+  color: var(--dim);
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.acc-h .chev {
+  color: #555;
+  font-size: 9px;
+  flex-shrink: 0;
+  width: 10px;
+}
+.acc.open .chev { color: #888; }
+.acc-b {
+  display: none;
+  padding: 2px 10px 10px 30px;
+  border-top: 1px solid #222;
+}
+.acc.open .acc-b { display: block; }
+
+/* Think — same pattern as main agent (spin ring + markdown body), NO fill dots */
+.think-card {
+  margin: 8px 0 8px;
+}
+.think-hd {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: #8a8a8a;
+  margin-bottom: 4px;
+}
+.think-hd .label { font-weight: 550; color: #9a9a9a; }
+.think-hd .timer {
+  margin-left: auto;
+  font-size: 10.5px;
+  color: #666;
+  font-variant-numeric: tabular-nums;
+}
+/* Main-agent style circle-trace spinner (not fill-dot) */
+.agent-think-wrap {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #8a8a8a;
+}
+.agent-think-svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
+.agent-think-svg .trace {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+}
+.agent-think-wrap[data-state="running"] .agent-think-svg .trace {
+  animation: agentTraceDraw 2.4s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+.agent-think-wrap[data-state="complete"] {
+  display: none; /* settled: main agent hides spinner */
+}
+@keyframes agentTraceDraw {
+  0%   { stroke-dashoffset: 100; }
+  50%  { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -100; }
+}
+.think-body {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #9a9a9a;
+  padding: 0 4px 2px 21px; /* align under label like main think body */
+  max-height: 72px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+.think-body::-webkit-scrollbar {
+  width: 5px;
+}
+.think-body::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+.think-body p { margin: 0 0 0.45em; }
+.think-body p:last-child { margin-bottom: 0; }
+.think-body strong { color: #b8b8b8; font-weight: 600; }
+.think-body code {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: #a8a8a8;
+  background: #1a1a1a;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.think-body ul {
+  margin: 0.2em 0 0.45em;
+  padding-left: 1.1em;
+}
+.think-body li { margin: 0.15em 0; }
+.think-card.is-done .think-body { display: none; }
+.think-card.is-done .think-hd .label { color: #7a7a7a; }
+
+.step {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 11.5px;
+  color: #a0a0a0;
+  margin: 3px 0;
+  padding-left: 21px; /* align with think body, no dots */
+}
+.step b { color: #c0c0c0; font-weight: 550; }
+.step em { font-style: normal; color: #666; }
+.sum {
+  display: none;
+  margin-top: 8px;
+  padding-left: 21px;
+  font-size: 11px;
+  color: #a8a8a8;
+  line-height: 1.4;
+}
+.sum.on { display: block; }
+
+/* timeline (simple, no accents) */
+.tl { position: relative; margin: 6px 0 8px; padding-left: 16px; }
+.tl::before {
+  content: "";
+  position: absolute;
+  left: 4px; top: 4px; bottom: 4px;
+  width: 1px;
+  background: #2a2a2a;
+}
+.ev { position: relative; margin: 0 0 7px; }
+.ev .node {
+  position: absolute;
+  left: -16px; top: 3px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--ac, #666);
+  border: 2px solid var(--pane);
+}
+.ev .lab { font-size: 10px; font-weight: 650; color: var(--ac); margin-bottom: 1px; }
+.ev .txt { font-size: 11.5px; color: #c0c0c0; }
+.ev .txt em { font-style: normal; color: #666; }
+
+.one {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid #2a2a2e;
+  background: #161616;
+  font-size: 11.5px;
+  color: #c8c8c8;
+}
+.line { font-size: 11.5px; color: #a8a8a8; margin: 3px 0; }
+.line em { font-style: normal; color: #666; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div class="brand">WARP · MULTI-AGENT · <span>mockups</span></div>
+    <div class="actions">
+      <button type="button" class="btn" id="btn-reset">Reset</button>
+      <button type="button" class="btn primary" id="btn-run">▶ Start animation</button>
+    </div>
+  </div>
+  <div class="tabs" id="tabs"></div>
+</header>
+<section class="stage">
+  <div class="meta">
+    <h2 id="title">V01</h2>
+    <p id="desc">…</p>
+  </div>
+  <div class="viewport">
+    <div class="pane">
+      <div class="pane-hd"><i></i> Warp · chat</div>
+      <div class="feed" id="feed"></div>
+      <div class="pane-ft" id="status">Idle</div>
+    </div>
+  </div>
+</section>
+<script>
+(function () {
+  "use strict";
+
+  const V = [
+    {
+      id: "v01",
+      n: "01",
+      name: "Accordion stack",
+      rec: true,
+      desc: "Header only: “Agent 1” / “Agent 2”. Far right: time. When finished: “4.2s · Done”. Open for think + steps. No type, no header dots, no duplicate labels.",
+    },
+    {
+      id: "v02",
+      n: "02",
+      name: "Accordion (same header)",
+      desc: "Same minimal header as V01 (Agent N + time · Done). Closed by default.",
+    },
+    {
+      id: "v03",
+      n: "03",
+      name: "Accordion (same header)",
+      desc: "Same clean Agent N row. Closed by default.",
+    },
+    {
+      id: "v04",
+      n: "04",
+      name: "Status line",
+      desc: "One small status row, no stack. Explore · Reading package.json",
+    },
+    {
+      id: "v05",
+      n: "05",
+      name: "Timeline",
+      desc: "Simple spine timeline — nodes + labels. No cards, no left stripes on containers.",
+    },
+    {
+      id: "v06",
+      n: "06",
+      name: "Summary only",
+      desc: "Closed rows while running. On done: one summary under the header (no step list unless you open).",
+    },
+  ];
+
+  const SC = {
+    user: "spawn explore + plan — map the codebase, draft next steps",
+    main: "Delegating to Explore and Plan.",
+    done: "Both finished. Structure mapped; plan drafted.",
+    agents: [
+      {
+        n: 1,
+        name: "Explore",
+        type: "explore",
+        color: "#7aa2f7",
+        think:
+          "Looking at **blast radius** and entry points.\n\n- Start from `package.json` + `src/extension.ts`\n- Map ACP client and webview modules\n- Note multi-agent surface under `docs/`\n- Check how tools stream into the parent transcript\n- Avoid dumping child tools into main chat\n- Prefer accordion ownership for Explore vs Plan\n- Keep parent messages short (delegate + summary only)\n- Confirm fill circle is header-only, not inside think",
+        steps: [
+          { verb: "Listing", target: "src/", ms: 360 },
+          { verb: "Read", target: "package.json", ms: 300 },
+          { verb: "Read", target: "src/extension.ts", ms: 380 },
+          { verb: "Searched", target: "acpClient", ms: 280 },
+        ],
+        summary: "Extension + webview + API layout mapped.",
+      },
+      {
+        n: 2,
+        name: "Plan",
+        type: "plan",
+        color: "#bb9af7",
+        think:
+          "Drafting a short UX plan from multi-agent notes.\n\n- **Identity** first (Agent 1 / 2)\n- Nest steps under accordion\n- Parent stays summary-only\n- Think body uses main-agent markdown + spinner\n- Cap think height with inner scroll so long CoT does not blow the stack\n- Closed by default; user opens if they care\n- On done: settle label to Thought, hide body",
+        steps: [
+          { verb: "Read", target: "docs/MULTI_AGENT.md", ms: 340 },
+          { verb: "Listed", target: "media/webview/js", ms: 280 },
+          { verb: "Drafted", target: "ux outline", ms: 400 },
+        ],
+        summary: "Identity → nest steps → live status → parent summary.",
+      },
+    ],
+  };
+
+  let idx = 0;
+  let running = false;
+  let timers = [];
+
+  const tabsEl = document.getElementById("tabs");
+  const titleEl = document.getElementById("title");
+  const descEl = document.getElementById("desc");
+  const feed = document.getElementById("feed");
+  const statusEl = document.getElementById("status");
+  const btnRun = document.getElementById("btn-run");
+  const btnReset = document.getElementById("btn-reset");
+
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+  function clearT() {
+    timers.forEach((t) => {
+      clearTimeout(t);
+      clearInterval(t);
+    });
+    timers = [];
+  }
+  function later(fn, ms) {
+    const t = setTimeout(fn, ms);
+    timers.push(t);
+  }
+  function scroll() {
+    feed.scrollTop = feed.scrollHeight;
+  }
+  function user() {
+    return (
+      '<div class="u fade"><div class="w">you</div><div class="b">' +
+      esc(SC.user) +
+      "</div></div>"
+    );
+  }
+  function who() {
+    return '<div class="who fade">Warp</div>';
+  }
+  function msg(t) {
+    return '<div class="msg fade">' + esc(t) + "</div>";
+  }
+  function base() {
+    feed.innerHTML = user() + who() + msg(SC.main);
+  }
+  function finish() {
+    running = false;
+    btnRun.disabled = false;
+    btnRun.textContent = "▶ Replay";
+    statusEl.textContent = "Done · " + V[idx].name;
+  }
+  function runVerb(v) {
+    if (v.endsWith("ing")) return v;
+    if (v.endsWith("ed")) return v.slice(0, -2) + "ing";
+    return v + "…";
+  }
+
+  function select(i) {
+    idx = i;
+    clearT();
+    running = false;
+    btnRun.disabled = false;
+    btnRun.textContent = "▶ Start animation";
+    Array.from(tabsEl.children).forEach((el, j) =>
+      el.classList.toggle("on", j === i)
+    );
+    const v = V[i];
+    titleEl.textContent = "V" + v.n + " · " + v.name + (v.rec ? " ★" : "");
+    descEl.textContent = v.desc;
+    feed.innerHTML =
+      user() +
+      '<p style="color:#555;font-size:10.5px;margin-top:8px">Press Start animation</p>';
+    statusEl.textContent = "Idle · " + v.name;
+  }
+
+  const SPIN_SVG =
+    '<svg class="agent-think-svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">' +
+    '<circle class="trace" cx="12" cy="12" r="8" pathLength="100"/>' +
+    "</svg>";
+
+  /** Lightweight markdown for think body (same spirit as main agent). */
+  function mdThink(text) {
+    let s = esc(text);
+    s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+    s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    // lines starting with - → list
+    const lines = s.split("\n");
+    let html = "";
+    let inList = false;
+    lines.forEach((line) => {
+      const m = line.match(/^\s*[-*]\s+(.+)$/);
+      if (m) {
+        if (!inList) {
+          html += "<ul>";
+          inList = true;
+        }
+        html += "<li>" + m[1] + "</li>";
+      } else {
+        if (inList) {
+          html += "</ul>";
+          inList = false;
+        }
+        if (line.trim()) html += "<p>" + line + "</p>";
+      }
+    });
+    if (inList) html += "</ul>";
+    return html || "<p>" + s + "</p>";
+  }
+
+  /** Always starts CLOSED. Header: "Agent N" … time | time · Done */
+  function makeAcc(a, opts) {
+    opts = opts || {};
+    const el = document.createElement("div");
+    el.className = "acc fade";
+    el.style.setProperty("--ac", a.color);
+
+    el.innerHTML =
+      '<button type="button" class="acc-h" data-toggle>' +
+      '<span class="title">Agent ' +
+      a.n +
+      "</span>" +
+      '<span class="meta" data-meta>0.0s</span>' +
+      '<span class="chev">▸</span>' +
+      "</button>" +
+      '<div class="acc-b">' +
+      '<div class="think-card is-streaming" data-think>' +
+      '<div class="think-hd">' +
+      '<div class="agent-think-wrap" data-state="running">' +
+      SPIN_SVG +
+      "</div>" +
+      '<span class="label">Thinking…</span>' +
+      '<span class="timer" data-think-t>0.0s</span>' +
+      "</div>" +
+      '<div class="think-body" data-think-body></div>' +
+      "</div>" +
+      '<div data-steps></div>' +
+      '<div class="sum" data-sum></div>' +
+      "</div>";
+
+    const body = el.querySelector("[data-think-body]");
+    if (body) body.innerHTML = mdThink(a.think);
+
+    el.querySelector("[data-toggle]").addEventListener("click", () => {
+      el.classList.toggle("open");
+      el.querySelector(".chev").textContent = el.classList.contains("open")
+        ? "▾"
+        : "▸";
+    });
+    return el;
+  }
+
+  function animateAgent(el, a, opts, done) {
+    opts = opts || {};
+    const t0 = Date.now();
+    const meta = el.querySelector("[data-meta]");
+    const steps = el.querySelector("[data-steps]");
+    const sum = el.querySelector("[data-sum]");
+    const thinkCard = el.querySelector("[data-think]");
+    const thinkWrap = el.querySelector(".agent-think-wrap");
+    const thinkTimer = el.querySelector("[data-think-t]");
+    const thinkLabel = el.querySelector(".think-hd .label");
+
+    const iv = setInterval(() => {
+      const sec = ((Date.now() - t0) / 1000).toFixed(1) + "s";
+      // Running: only time on the far right
+      if (meta && !el.dataset.finished) meta.textContent = sec;
+      if (thinkTimer && !el.dataset.finished) thinkTimer.textContent = sec;
+    }, 100);
+    timers.push(iv);
+
+    // NEVER auto-open
+    let i = 0;
+    function next() {
+      if (i >= a.steps.length) {
+        clearInterval(iv);
+        el.dataset.finished = "1";
+        el.classList.add("done");
+        // Settle think like main agent
+        if (thinkCard) thinkCard.classList.add("is-done");
+        if (thinkWrap) thinkWrap.setAttribute("data-state", "complete");
+        if (thinkLabel) thinkLabel.textContent = "Thought";
+        if (sum) {
+          sum.textContent = a.summary;
+          sum.classList.add("on");
+        }
+        const elapsed = ((Date.now() - t0) / 1000).toFixed(1) + "s";
+        if (thinkTimer) thinkTimer.textContent = elapsed;
+        // Far right only: "4.2s · Done"
+        if (meta) meta.textContent = elapsed + " · Done";
+        el.classList.remove("open");
+        const chev = el.querySelector(".chev");
+        if (chev) chev.textContent = "▸";
+        done();
+        return;
+      }
+      const s = a.steps[i++];
+      // Steps: plain text like main tool verbs — no fill dots inside accordion
+      const row = document.createElement("div");
+      row.className = "step fade";
+      row.innerHTML =
+        "<span><b>" +
+        esc(runVerb(s.verb)) +
+        "</b> <em>" +
+        esc(s.target) +
+        "</em></span>";
+      steps.appendChild(row);
+      if (el.classList.contains("open")) scroll();
+      later(() => {
+        row.innerHTML =
+          "<span><b>" +
+          esc(s.verb) +
+          "</b> <em>" +
+          esc(s.target) +
+          "</em></span>";
+        later(next, 40);
+      }, s.ms);
+    }
+    next();
+  }
+
+  function runStack(opts) {
+    opts = opts || {};
+    base();
+    const stack = document.createElement("div");
+    stack.className = "stack";
+    feed.appendChild(stack);
+    let left = SC.agents.length;
+    SC.agents.forEach((a, i) => {
+      later(() => {
+        const el = makeAcc(a, opts);
+        el.classList.remove("open");
+        stack.appendChild(el);
+        scroll();
+        animateAgent(el, a, opts, () => {
+          left--;
+          if (!left) {
+            feed.insertAdjacentHTML("beforeend", who() + msg(SC.done));
+            scroll();
+            finish();
+          }
+        });
+      }, 200 + i * 160);
+    });
+  }
+
+  function runStatus() {
+    base();
+    feed.insertAdjacentHTML(
+      "beforeend",
+      '<div class="one fade" id="st"><span class="fill run" style="--ac:#7aa2f7;display:inline-block;vertical-align:middle;margin-right:6px"></span><span id="stt">Starting…</span></div>'
+    );
+    const st = document.getElementById("st");
+    const stt = document.getElementById("stt");
+    let d = 200;
+    SC.agents.forEach((a) => {
+      a.steps.forEach((s) => {
+        later(() => {
+          st.querySelector(".fill").style.setProperty("--ac", a.color);
+          stt.innerHTML =
+            '<b style="color:#c8c8c8">' +
+            esc(a.name) +
+            "</b> · " +
+            esc(runVerb(s.verb)) +
+            ' <em style="color:#666">' +
+            esc(s.target) +
+            "</em>";
+          scroll();
+        }, d);
+        d += s.ms;
+      });
+    });
+    later(() => {
+      st.querySelector(".fill").className = "fill done";
+      stt.textContent = SC.done;
+      finish();
+    }, d + 140);
+  }
+
+  function runTimeline() {
+    base();
+    feed.insertAdjacentHTML("beforeend", '<div class="tl" id="tl"></div>');
+    const tl = document.getElementById("tl");
+    function add(c, lab, txt) {
+      const el = document.createElement("div");
+      el.className = "ev fade";
+      el.style.setProperty("--ac", c);
+      el.innerHTML =
+        '<span class="node"></span><div class="lab">' +
+        esc(lab) +
+        '</div><div class="txt">' +
+        txt +
+        "</div>";
+      tl.appendChild(el);
+      scroll();
+    }
+    let d = 200;
+    later(() => add("#ff5a00", "MAIN", "delegated"), 80);
+    SC.agents.forEach((a) => {
+      a.steps.forEach((s) => {
+        later(() => {
+          add(
+            a.color,
+            a.name.toUpperCase(),
+            esc(s.verb) + ' <em>' + esc(s.target) + "</em>"
+          );
+        }, d);
+        d += s.ms;
+      });
+      later(() => add(a.color, a.name.toUpperCase(), esc(a.summary)), d);
+      d += 120;
+    });
+    later(() => {
+      add("#ff5a00", "MAIN", esc(SC.done));
+      finish();
+    }, d + 160);
+  }
+
+  function runSummaryOnly() {
+    base();
+    const stack = document.createElement("div");
+    stack.className = "stack";
+    feed.appendChild(stack);
+    let left = SC.agents.length;
+    SC.agents.forEach((a, i) => {
+      later(() => {
+        const el = makeAcc(a, {});
+        el.classList.remove("open");
+        stack.appendChild(el);
+        const total = a.steps.reduce((x, s) => x + s.ms, 0);
+        const t0 = Date.now();
+        const meta = el.querySelector("[data-meta]");
+        const iv = setInterval(() => {
+          if (meta && !el.dataset.finished)
+            meta.textContent = ((Date.now() - t0) / 1000).toFixed(1) + "s";
+        }, 100);
+        timers.push(iv);
+        later(() => {
+          clearInterval(iv);
+          el.dataset.finished = "1";
+          el.querySelector("[data-meta]").textContent =
+            ((Date.now() - t0) / 1000).toFixed(1) + "s · Done";
+          el.querySelector("[data-steps]").innerHTML = "";
+          const tc = el.querySelector("[data-think]");
+          if (tc) tc.classList.add("is-done");
+          const tw = el.querySelector(".agent-think-wrap");
+          if (tw) tw.setAttribute("data-state", "complete");
+          const tl = el.querySelector(".think-hd .label");
+          if (tl) tl.textContent = "Thought";
+          const sum = el.querySelector("[data-sum]");
+          sum.textContent = a.summary;
+          sum.classList.add("on");
+          el.classList.remove("open");
+          left--;
+          if (!left) {
+            feed.insertAdjacentHTML("beforeend", who() + msg(SC.done));
+            finish();
+          }
+        }, total);
+      }, 200 + i * 140);
+    });
+  }
+
+  const RUN = {
+    v01: () => runStack({}),
+    v02: () => runStack({}),
+    v03: () => runStack({}),
+    v04: runStatus,
+    v05: runTimeline,
+    v06: runSummaryOnly,
+  };
+
+  V.forEach((v, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "tab" + (i === 0 ? " on" : "");
+    b.innerHTML =
+      '<span class="n">V' +
+      v.n +
+      "</span>" +
+      esc(v.name) +
+      (v.rec ? ' <span class="rec">★</span>' : "");
+    b.addEventListener("click", () => select(i));
+    tabsEl.appendChild(b);
+  });
+
+  btnReset.addEventListener("click", () => select(idx));
+  btnRun.addEventListener("click", () => {
+    if (running) return;
+    clearT();
+    running = true;
+    btnRun.disabled = true;
+    btnRun.textContent = "Running…";
+    statusEl.textContent = "Running · " + V[idx].name;
+    (RUN[V[idx].id] || RUN.v01)();
+  });
+
+  select(0);
+})();
+</script>
+</body>
+</html>

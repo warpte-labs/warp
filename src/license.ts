@@ -1,21 +1,25 @@
 /**
- * Warp Pro license: 7-day local trial + Stripe check + Ably realtime unlock.
- * Trial needs no server. Pro via billing API; Ably notifies after Checkout.
+ * Warp Pro license — PRODUCTION
+ *
+ * Server (Neon + Redis + Stripe) is source of truth.
+ * Local state is UI cache only — every send checks the server.
  */
 import * as vscode from "vscode";
 import * as crypto from "crypto";
+import * as https from "https";
+import type { IncomingMessage } from "http";
 
-const TRIAL_MS = 7 * 24 * 60 * 60 * 1000;
-const PRO_CACHE_MS = 60 * 60 * 1000; // 1h
+const PRO_CACHE_MS = 60_000; // short local UI cache only
 const PAY_POLL_MS = 2500;
-const PAY_POLL_MAX_MS = 5 * 60 * 1000; // 5 min after opening Checkout
+const PAY_POLL_MAX_MS = 5 * 60 * 1000;
+const SOFT_SYNC_MS = 60_000;
 
 const K = {
-  trialStarted: "warp.license.trialStartedAt",
   billingEmail: "warp.license.billingEmail",
   installId: "warp.license.installId",
-  proUntil: "warp.license.proCachedUntil",
-  proFlag: "warp.license.proCached",
+  /** last server snapshot (JSON) */
+  serverSnap: "warp.license.serverSnap",
+  serverSnapAt: "warp.license.serverSnapAt",
 };
 
 export type PlanKind = "trial" | "pro" | "expired" | "none";
@@ -29,24 +33,47 @@ export type LicenseStatus = {
   trialEndsAt: number | null;
   billingEmail: string;
   pro: boolean;
+  source?: string;
 };
 
 type LicenseListener = (status: LicenseStatus) => void;
+type AblyEventListener = (name: string, data?: unknown) => void;
+type ServerSnap = {
+  status: string;
+  allowed: boolean;
+  pro: boolean;
+  label: string;
+  detail: string;
+  trialDaysLeft: number | null;
+  trialEndsAt: number | null;
+  email?: string | null;
+  installId?: string;
+};
 
 let ext: vscode.ExtensionContext | undefined;
 let listeners: LicenseListener[] = [];
-let ablyClient: { close: () => void } | null = null;
+let ablyEventListeners: AblyEventListener[] = [];
+let ablyCloser: (() => void) | null = null;
 let payPollTimer: ReturnType<typeof setInterval> | null = null;
 let payPollDeadline = 0;
+let softSyncTimer: ReturnType<typeof setInterval> | null = null;
+let ablyReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+/** In-flight server check de-dupe */
+let inflight: Promise<LicenseStatus> | null = null;
 
 export function initLicense(context: vscode.ExtensionContext): void {
   ext = context;
   ensureInstallId();
-  // Sync with Stripe (clears stale Pro after cancel / retest)
-  void refreshProFromServer().then(() => {
-    notifyListeners();
-  });
+  context.subscriptions.push({ dispose: () => disposeLicense() });
+  void fetchServerLicense({ startTrial: false }).then(() => notifyListeners());
   void startAblyListener();
+  startSoftSync();
+}
+
+export function disposeLicense(): void {
+  stopPayPoll();
+  stopSoftSync();
+  stopAbly();
 }
 
 export function onLicenseChange(fn: LicenseListener): vscode.Disposable {
@@ -54,6 +81,24 @@ export function onLicenseChange(fn: LicenseListener): vscode.Disposable {
   return new vscode.Disposable(() => {
     listeners = listeners.filter((x) => x !== fn);
   });
+}
+
+/** Raw Ably event names (license / usage / credits) for live Usage feed. */
+export function onAblyEvent(fn: AblyEventListener): vscode.Disposable {
+  ablyEventListeners.push(fn);
+  return new vscode.Disposable(() => {
+    ablyEventListeners = ablyEventListeners.filter((x) => x !== fn);
+  });
+}
+
+function emitAblyEvent(name: string, data?: unknown): void {
+  for (const fn of ablyEventListeners) {
+    try {
+      fn(name, data);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 function notifyListeners(): void {
@@ -68,9 +113,7 @@ function notifyListeners(): void {
 }
 
 function state() {
-  if (!ext) {
-    throw new Error("License not initialized");
-  }
+  if (!ext) throw new Error("License not initialized");
   return ext.globalState;
 }
 
@@ -105,175 +148,216 @@ export function billingApiBase(): string {
   return String(cfg || "https://warpte.com").replace(/\/$/, "");
 }
 
-export async function markTrialStarted(): Promise<void> {
-  const s = state();
-  const existing = s.get<number>(K.trialStarted);
-  if (typeof existing === "number" && existing > 0) return;
-  await s.update(K.trialStarted, Date.now());
-}
-
-function trialStartedAt(): number | null {
-  const v = state().get<number>(K.trialStarted);
-  return typeof v === "number" && v > 0 ? v : null;
-}
-
-function cachedPro(): boolean {
-  const s = state();
-  if (!s.get<boolean>(K.proFlag)) return false;
-  const until = s.get<number>(K.proUntil) || 0;
-  return until > Date.now();
-}
-
-async function setProCache(pro: boolean): Promise<void> {
-  const s = state();
-  await s.update(K.proFlag, pro);
-  await s.update(K.proUntil, pro ? Date.now() + PRO_CACHE_MS : 0);
-}
-
-/** Force-clear local Pro (e.g. retest after Stripe cancel). */
-export async function clearProCache(): Promise<void> {
-  await setProCache(false);
-  notifyListeners();
-}
-
-export function getLicenseStatusLocal(): LicenseStatus {
-  if (cachedPro()) {
-    return {
-      kind: "pro",
-      allowed: true,
-      label: "Pro",
-      detail: "$5/mo · active",
-      trialDaysLeft: null,
-      trialEndsAt: null,
-      billingEmail: getBillingEmail(),
-      pro: true,
-    };
+function readSnap(): ServerSnap | null {
+  const raw = state().get<string>(K.serverSnap);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as ServerSnap;
+  } catch {
+    return null;
   }
+}
 
-  const start = trialStartedAt();
-  if (start == null) {
+async function writeSnap(snap: ServerSnap): Promise<void> {
+  await state().update(K.serverSnap, JSON.stringify(snap));
+  await state().update(K.serverSnapAt, Date.now());
+  if (snap.email) {
+    await state().update(K.billingEmail, String(snap.email).toLowerCase());
+  }
+}
+
+/** UI snapshot from last server response (stable labels — no "Checking…" flicker). */
+export function getLicenseStatusLocal(): LicenseStatus {
+  const snap = readSnap();
+  const email = getBillingEmail();
+  if (!snap) {
+    // Stable placeholder until first server response (do not flip-flop labels)
     return {
       kind: "none",
-      allowed: true,
-      label: "Free trial",
-      detail: "7 days free · starts on first message",
-      trialDaysLeft: 7,
+      allowed: false,
+      label: "Warp plan",
+      detail: "Connecting to license server…",
+      trialDaysLeft: null,
       trialEndsAt: null,
-      billingEmail: getBillingEmail(),
+      billingEmail: email,
       pro: false,
+      source: "local-empty",
     };
   }
-
-  const ends = start + TRIAL_MS;
-  const leftMs = ends - Date.now();
-  if (leftMs > 0) {
-    const days = Math.max(1, Math.ceil(leftMs / (24 * 60 * 60 * 1000)));
-    return {
-      kind: "trial",
-      allowed: true,
-      label: "Trial",
-      detail: `${days} day${days === 1 ? "" : "s"} left · then $5/mo`,
-      trialDaysLeft: days,
-      trialEndsAt: ends,
-      billingEmail: getBillingEmail(),
-      pro: false,
-    };
-  }
-
+  const kind = (snap.status || "none") as PlanKind;
   return {
-    kind: "expired",
-    allowed: false,
-    label: "Trial ended",
-    detail: "Subscribe to Warp Pro · $5/mo",
-    trialDaysLeft: 0,
-    trialEndsAt: ends,
-    billingEmail: getBillingEmail(),
-    pro: false,
+    kind:
+      kind === "pro" || kind === "trial" || kind === "expired" || kind === "none"
+        ? kind
+        : "none",
+    allowed: !!snap.allowed,
+    label: snap.label || "—",
+    detail: snap.detail || "",
+    trialDaysLeft:
+      typeof snap.trialDaysLeft === "number" ? snap.trialDaysLeft : null,
+    trialEndsAt:
+      typeof snap.trialEndsAt === "number" ? snap.trialEndsAt : null,
+    billingEmail: email || String(snap.email || ""),
+    pro: !!snap.pro,
+    source: "server-cache",
   };
 }
 
-export async function refreshProFromServer(): Promise<LicenseStatus> {
-  const email = getBillingEmail();
-  if (!email) {
-    await setProCache(false);
-    return getLicenseStatusLocal();
-  }
-  try {
-    const url = `${billingApiBase()}/api/license?email=${encodeURIComponent(email)}`;
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
-    const data = (await res.json()) as {
-      ok?: boolean;
-      pro?: boolean;
-      error?: string;
-    };
-    if (data && data.pro) {
-      await setProCache(true);
-    } else {
-      await setProCache(false);
+/**
+ * Always hits production license API (Neon/Redis/Stripe).
+ */
+export async function fetchServerLicense(opts?: {
+  startTrial?: boolean;
+}): Promise<LicenseStatus> {
+  if (inflight) return inflight;
+  inflight = (async () => {
+    const installId = getInstallId();
+    const email = getBillingEmail();
+    const qs = new URLSearchParams({ installId });
+    if (email) qs.set("email", email);
+    if (opts?.startTrial) qs.set("startTrial", "1");
+    const url = `${billingApiBase()}/api/license?${qs.toString()}`;
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+      });
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok || data.ok === false) {
+        // Fail closed for paid SaaS if server is up but errors; if network down, use short cache
+        const prev = getLicenseStatusLocal();
+        if (prev.source === "server-cache" && prev.allowed) {
+          // allow only if we had a recent positive snap (< 2 min)
+          const at = state().get<number>(K.serverSnapAt) || 0;
+          if (Date.now() - at < 120_000) return prev;
+        }
+        return {
+          kind: "expired",
+          allowed: false,
+          label: "Unavailable",
+          detail: String(data.error || "Could not verify license"),
+          trialDaysLeft: 0,
+          trialEndsAt: null,
+          billingEmail: email,
+          pro: false,
+          source: "error",
+        };
+      }
+      const snap: ServerSnap = {
+        status: String(data.status || "none"),
+        allowed: !!data.allowed,
+        pro: !!data.pro,
+        label: String(data.label || "—"),
+        detail: String(data.detail || ""),
+        trialDaysLeft:
+          typeof data.trialDaysLeft === "number" ? data.trialDaysLeft : null,
+        trialEndsAt:
+          typeof data.trialEndsAt === "number" ? data.trialEndsAt : null,
+        email: data.email ? String(data.email) : email || null,
+        installId,
+      };
+      await writeSnap(snap);
+      return getLicenseStatusLocal();
+    } catch {
+      const prev = getLicenseStatusLocal();
+      const at = state().get<number>(K.serverSnapAt) || 0;
+      // Offline grace: 2 minutes only if previously allowed
+      if (prev.allowed && Date.now() - at < 120_000) return prev;
+      return {
+        kind: "expired",
+        allowed: false,
+        label: "Offline",
+        detail: "Cannot reach license server — try again",
+        trialDaysLeft: 0,
+        trialEndsAt: null,
+        billingEmail: email,
+        pro: false,
+        source: "offline",
+      };
+    } finally {
+      inflight = null;
     }
-  } catch {
-    /* keep cache on network error */
-  }
-  return getLicenseStatusLocal();
+  })();
+  return inflight;
 }
 
-/**
- * Apply Pro from Ably / poll; toast once when newly activated.
- */
-async function applyProUnlock(email?: string): Promise<void> {
-  const wasPro = cachedPro();
-  if (email) {
-    await setBillingEmail(email);
+/** Clear cached snap without UI thrash (no notify). */
+export async function clearProCache(): Promise<void> {
+  await state().update(K.serverSnap, undefined);
+  await state().update(K.serverSnapAt, 0);
+}
+
+export async function refreshProFromServer(): Promise<LicenseStatus> {
+  const before = JSON.stringify(readSnap());
+  const st = await fetchServerLicense({ startTrial: false });
+  const after = JSON.stringify(readSnap());
+  // Only push UI when something actually changed
+  if (before !== after) {
+    notifyListeners();
   }
-  await setProCache(true);
+  return st;
+}
+
+async function applyProUnlock(email?: string): Promise<void> {
+  if (email) await setBillingEmail(email);
+  const was = getLicenseStatusLocal().pro;
+  await fetchServerLicense({ startTrial: false });
   stopPayPoll();
   notifyListeners();
-  if (!wasPro) {
+  if (!was && getLicenseStatusLocal().pro) {
     void vscode.window.showInformationMessage(
       "Warp Pro is active — thank you!"
     );
   }
 }
 
+async function applyProDowngrade(): Promise<void> {
+  const was = getLicenseStatusLocal().pro;
+  await fetchServerLicense({ startTrial: false });
+  notifyListeners();
+  if (was && !getLicenseStatusLocal().pro) {
+    void vscode.window.showInformationMessage(
+      "Warp Pro ended — upgrade anytime from Settings → Account & billing."
+    );
+  }
+}
+
+/**
+ * Gate every agent send — server authoritative.
+ * Starts server trial on first use only when status is still "none".
+ */
 export async function assertCanUseAgent(): Promise<{
   ok: boolean;
   status: LicenseStatus;
   message?: string;
 }> {
-  if (cachedPro()) {
-    return { ok: true, status: getLicenseStatusLocal() };
+  // First pass without starting trial (respect expired)
+  let status = await fetchServerLicense({ startTrial: false });
+
+  // Only start trial if never started (status none, no dates)
+  if (
+    status.kind === "none" &&
+    !status.pro &&
+    status.trialEndsAt == null
+  ) {
+    status = await fetchServerLicense({ startTrial: true });
   }
 
-  const local = getLicenseStatusLocal();
-  if (!local.allowed && getBillingEmail()) {
-    const refreshed = await refreshProFromServer();
-    if (refreshed.allowed) {
-      notifyListeners();
-      return { ok: true, status: refreshed };
-    }
-  }
+  notifyListeners();
 
-  if (local.kind === "none") {
-    await markTrialStarted();
-    return { ok: true, status: getLicenseStatusLocal() };
-  }
-
-  if (local.allowed) {
-    return { ok: true, status: local };
+  if (status.allowed) {
+    return { ok: true, status };
   }
 
   return {
     ok: false,
-    status: local,
+    status,
     message:
-      "Your 7-day Warp trial has ended. Settings → Account → Subscribe ($5/mo) to keep using Warp.",
+      status.detail ||
+      "Free trial expired. Upgrade to Pro ($5/mo) to keep chatting.",
   };
 }
 
-/** Poll Stripe license after opening Checkout (works even without Ably). */
 function startPayPoll(): void {
   stopPayPoll();
   payPollDeadline = Date.now() + PAY_POLL_MAX_MS;
@@ -283,9 +367,16 @@ function startPayPoll(): void {
         stopPayPoll();
         return;
       }
-      const st = await refreshProFromServer();
-      if (st.pro) {
-        await applyProUnlock();
+      const before = getLicenseStatusLocal().pro;
+      const st = await fetchServerLicense({ startTrial: false });
+      if (st.pro !== before) {
+        notifyListeners();
+        if (st.pro) {
+          void vscode.window.showInformationMessage(
+            "Warp Pro is active — thank you!"
+          );
+          stopPayPoll();
+        }
       }
     })();
   }, PAY_POLL_MS);
@@ -298,80 +389,177 @@ function stopPayPoll(): void {
   }
 }
 
-/**
- * Ably realtime listener (optional — needs ABLY_API_KEY on server).
- * Falls back silently if token endpoint unavailable.
- */
-async function startAblyListener(): Promise<void> {
-  if (ablyClient) {
+function startSoftSync(): void {
+  stopSoftSync();
+  softSyncTimer = setInterval(() => {
+    void (async () => {
+      await refreshProFromServer(); // only notifies on change
+      if (!ablyCloser) void startAblyListener();
+    })();
+  }, SOFT_SYNC_MS);
+}
+
+function stopSoftSync(): void {
+  if (softSyncTimer) {
+    clearInterval(softSyncTimer);
+    softSyncTimer = null;
+  }
+}
+
+function stopAbly(): void {
+  if (ablyReconnectTimer) {
+    clearTimeout(ablyReconnectTimer);
+    ablyReconnectTimer = null;
+  }
+  if (ablyCloser) {
     try {
-      ablyClient.close();
+      ablyCloser();
     } catch {
       /* ignore */
     }
-    ablyClient = null;
+    ablyCloser = null;
   }
+}
 
+async function startAblyListener(): Promise<void> {
+  stopAbly();
   const installId = getInstallId();
   const base = billingApiBase();
 
+  let token: string;
+  let channel: string;
   try {
-    // Dynamic import so package is optional at runtime if missing
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Ably = require("ably") as typeof import("ably");
-    const client = new Ably.Realtime({
-      authCallback: (tokenParams, callback) => {
-        void (async () => {
-          try {
-            const res = await fetch(
-              `${base}/api/ably/token?installId=${encodeURIComponent(installId)}`,
-              { headers: { Accept: "application/json" } }
-            );
-            const data = (await res.json()) as {
-              ok?: boolean;
-              tokenRequest?: object;
-              error?: string;
-            };
-            if (!res.ok || !data.tokenRequest) {
-              callback(data.error || `token ${res.status}`, null as never);
-              return;
-            }
-            callback(null, data.tokenRequest as never);
-          } catch (e) {
-            callback(e instanceof Error ? e.message : String(e), null as never);
-          }
-        })();
-      },
-    });
-
-    const channelName = `warp:install:${installId}`;
-    const channel = client.channels.get(channelName);
-    channel.subscribe("license", (msg) => {
-      void (async () => {
-        const data = (msg && msg.data) || {};
-        const pro = !!(data as { pro?: boolean }).pro;
-        const email = String((data as { email?: string }).email || "").trim();
-        if (pro) {
-          await applyProUnlock(email || undefined);
-        } else {
-          await setProCache(false);
-          notifyListeners();
-        }
-      })();
-    });
-
-    ablyClient = {
-      close: () => {
-        try {
-          client.close();
-        } catch {
-          /* ignore */
-        }
-      },
+    const res = await fetch(
+      `${base}/api/ably/token?installId=${encodeURIComponent(installId)}`,
+      { headers: { Accept: "application/json" } }
+    );
+    const data = (await res.json()) as {
+      ok?: boolean;
+      token?: string;
+      channel?: string;
     };
+    if (!res.ok || !data.token || !data.channel) return;
+    token = data.token;
+    channel = data.channel;
   } catch {
-    // Ably package missing or server not configured — poll still works after Checkout
+    return;
   }
+
+  let closed = false;
+  let req: ReturnType<typeof https.get> | null = null;
+  let buffer = "";
+
+  const scheduleReconnect = () => {
+    if (closed) return;
+    if (ablyReconnectTimer) clearTimeout(ablyReconnectTimer);
+    ablyReconnectTimer = setTimeout(() => {
+      if (!closed) void startAblyListener();
+    }, 4000);
+  };
+
+  const handleNamedEvent = (name: string, raw: unknown) => {
+    emitAblyEvent(name || "message", raw);
+    if (name !== "license" && name !== "message" && name !== "") return;
+    void (async () => {
+      try {
+        let data: { pro?: boolean; email?: string } = {};
+        if (typeof raw === "string") {
+          try {
+            data = JSON.parse(raw) as { pro?: boolean; email?: string };
+          } catch {
+            return;
+          }
+        } else if (raw && typeof raw === "object") {
+          data = raw as { pro?: boolean; email?: string };
+        }
+        if (name === "license" || typeof data.pro === "boolean") {
+          if (data.email) await setBillingEmail(String(data.email));
+          if (data.pro) {
+            await applyProUnlock(data.email ? String(data.email) : undefined);
+          } else if (data.pro === false) {
+            await applyProDowngrade();
+          } else {
+            await refreshProFromServer();
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    })();
+  };
+
+  const onChunk = (chunk: string) => {
+    buffer += chunk;
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop() || "";
+    for (const block of parts) {
+      const lines = block.split("\n");
+      let eventName = "message";
+      let dataLine = "";
+      for (const line of lines) {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLine += line.slice(5).trim();
+      }
+      if (!dataLine) continue;
+      try {
+        const parsed = JSON.parse(dataLine) as {
+          name?: string;
+          data?: unknown;
+          messages?: Array<{ name?: string; data?: unknown }>;
+        };
+        if (parsed.name) {
+          handleNamedEvent(String(parsed.name), parsed.data);
+        } else if (Array.isArray(parsed.messages)) {
+          for (const m of parsed.messages) {
+            handleNamedEvent(String(m.name || "message"), m.data);
+          }
+        } else {
+          handleNamedEvent(eventName || "message", parsed.data ?? parsed);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  };
+
+  const path =
+    `/event-stream?channels=${encodeURIComponent(channel)}&v=1.2` +
+    `&accessToken=${encodeURIComponent(token)}`;
+
+  req = https.get(
+    {
+      hostname: "realtime.ably.io",
+      path,
+      headers: { Accept: "text/event-stream" },
+    },
+    (res: IncomingMessage) => {
+      if (res.statusCode && res.statusCode >= 400) {
+        res.resume();
+        scheduleReconnect();
+        return;
+      }
+      res.setEncoding("utf8");
+      res.on("data", (d: string) => onChunk(d));
+      res.on("end", () => {
+        if (!closed) scheduleReconnect();
+      });
+      res.on("error", () => {
+        if (!closed) scheduleReconnect();
+      });
+    }
+  );
+  req.on("error", () => {
+    if (!closed) scheduleReconnect();
+  });
+
+  ablyCloser = () => {
+    closed = true;
+    try {
+      req?.destroy();
+    } catch {
+      /* ignore */
+    }
+  };
 }
 
 export async function startCheckout(): Promise<void> {
@@ -397,9 +585,8 @@ export async function startCheckout(): Promise<void> {
   }
   await setBillingEmail(email);
 
-  const base = billingApiBase();
   try {
-    const res = await fetch(`${base}/api/stripe/checkout`, {
+    const res = await fetch(`${billingApiBase()}/api/stripe/checkout`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -415,12 +602,11 @@ export async function startCheckout(): Promise<void> {
     if (!data.ok || !data.url) {
       throw new Error(data.error || `Checkout failed (${res.status})`);
     }
-    // Listen for unlock while user pays in browser
     void startAblyListener();
     startPayPoll();
     await vscode.env.openExternal(vscode.Uri.parse(data.url));
     void vscode.window.showInformationMessage(
-      "Complete payment in the browser — Warp Pro unlocks automatically."
+      "Complete payment in the browser — Pro unlocks automatically."
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -459,6 +645,7 @@ export async function openBillingPortal(): Promise<void> {
     if (!data.ok || !data.url) {
       throw new Error(data.error || "Portal unavailable");
     }
+    startPayPoll();
     await vscode.env.openExternal(vscode.Uri.parse(data.url));
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -477,4 +664,48 @@ export function licenseSettingsFields(): Record<string, unknown> {
     planTrialDaysLeft: st.trialDaysLeft,
     billingEmail: st.billingEmail,
   };
+}
+
+/**
+ * Debug: expire trial on SERVER (Neon) if LICENSE_DEBUG_SECRET is configured,
+ * then refresh local snap.
+ */
+export async function forceExpireTrial(): Promise<LicenseStatus> {
+  const installId = getInstallId();
+  const secret = vscode.workspace
+    .getConfiguration("warp")
+    .get<string>("licenseDebugSecret", "");
+  if (secret) {
+    try {
+      const res = await fetch(`${billingApiBase()}/api/license/debug-expire`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ installId, secret }),
+      });
+      const data = (await res.json()) as { ok?: boolean; error?: string };
+      if (!res.ok || !data.ok) {
+        throw new Error(data.error || `debug-expire ${res.status}`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      void vscode.window.showErrorMessage(`Server expire failed: ${msg}`);
+    }
+  }
+  await clearProCache();
+  const st = await fetchServerLicense({ startTrial: false });
+  notifyListeners();
+  void vscode.window.showWarningMessage(
+    `License: ${st.label} · allowed=${st.allowed}. Send a message to test the lock.`
+  );
+  return st;
+}
+
+export async function forceResetTrial(): Promise<LicenseStatus> {
+  await clearProCache();
+  const st = await fetchServerLicense({ startTrial: false });
+  notifyListeners();
+  return st;
 }

@@ -182,16 +182,18 @@
       " " +
       (tool.title || "") +
       " " +
-      (tool.label || "")
+      (tool.label || "") +
+      " " +
+      (tool.target || "")
     ).toLowerCase();
 
-    if (/read|readfile|cat /.test(hay)) {
+    if (/read|readfile|cat\b|open_page/.test(hay)) {
       return running ? "Reading" : "Read";
     }
-    if (/list|ls |dir |listdir/.test(hay)) {
+    if (/list|listdir|list_dir|ls\b|dir\b|glob/.test(hay)) {
       return running ? "Listing" : "Listed";
     }
-    if (/search|grep|find|glob/.test(hay)) {
+    if (/search|grep|find|rg\b/.test(hay)) {
       return running ? "Searching" : "Searched";
     }
     if (/edit|write|patch|apply|search_replace/.test(hay)) {
@@ -200,21 +202,42 @@
     if (/run|exec|shell|bash|cmd|terminal|command|execute/.test(hay)) {
       return running ? "Running" : "Ran";
     }
-    if (/fetch|http|web|curl|open_page/.test(hay)) {
+    if (/fetch|http|web|curl/.test(hay)) {
       return running ? "Fetching" : "Fetched";
     }
-    if (/mcp|use_tool|tool/.test(hay)) {
+    // Path-only targets (common when kind is empty) — never "Called"
+    const tgt = String(tool.target || "").trim();
+    if (tgt && (/[/\\]/.test(tgt) || /^[a-z]:\\/i.test(tgt))) {
+      if (/\.(md|json|ts|js|tsx|jsx|css|html|toml|yml|yaml|txt)$/i.test(tgt)) {
+        return running ? "Reading" : "Read";
+      }
+      return running ? "Listing" : "Listed";
+    }
+    // Background task / subagent poll — never show bare "tool"
+    if (
+      /get_command_or_subagent|get_task_output|task output|wait_command|wait_task|background\s*task|checking agent/.test(
+        hay
+      )
+    ) {
+      return running ? "Checking" : "Checked";
+    }
+    if (/mcp|use_tool/.test(hay) && !/tool_call|tool-row/.test(hay)) {
       return running ? "Calling" : "Called";
     }
-    // Fall back to label if it's already a nice word
     const lab = (tool.label || tool.title || "").trim();
-    if (lab && !looksLikeToolSnake(lab) && !looksLikeCallId(lab)) {
-      if (running) {
-        return lab.endsWith("ing") ? lab : lab + (lab.length < 12 ? "…" : "");
-      }
-      return lab;
+    // ACP SSE often sends title/kind as literally "tool"
+    if (
+      !lab ||
+      lab.toLowerCase() === "tool" ||
+      looksLikeCallId(lab) ||
+      looksLikeToolSnake(lab)
+    ) {
+      return running ? "Working" : "Done";
     }
-    return running ? "Working" : "Done";
+    if (running) {
+      return lab.endsWith("ing") ? lab : lab + (lab.length < 12 ? "…" : "");
+    }
+    return lab;
   }
 
   function displayTarget(tool) {

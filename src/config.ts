@@ -206,6 +206,21 @@ export async function setDefaultCwd(value: string): Promise<void> {
   );
 }
 
+// ── Multi-agent ──────────────────────────────────────────────
+
+/**
+ * When true (default), agent process gets GROK_SUBAGENTS=1 so Grok can
+ * spawn subagents / task tool. When false, GROK_SUBAGENTS=0.
+ * See grokinfoxai/settings.md + features.md Subagents.
+ */
+export function getSubagentsEnabled(): boolean {
+  return getBool("subagentsEnabled", true);
+}
+
+export async function setSubagentsEnabled(on: boolean): Promise<boolean> {
+  return setBool("subagentsEnabled", on);
+}
+
 // ── Dev (not in sidebar UI) ──────────────────────────────────
 
 export function getMockMode(): boolean {
@@ -230,6 +245,8 @@ export type SettingsSnapshot = {
   binaryPath: string;
   defaultCwd: string;
   mockMode: boolean;
+  /** Multi-agent / subagents master switch (GROK_SUBAGENTS). */
+  subagentsEnabled: boolean;
   resolvedBinary: string;
   binaryAvailable: boolean;
   signedIn: boolean;

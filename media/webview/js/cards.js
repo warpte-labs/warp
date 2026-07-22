@@ -155,6 +155,33 @@
     }
   }
 
+  /**
+   * User hit Stop — settle think line as "Agent interrupted".
+   */
+  function interruptThink(card, elapsedSec) {
+    if (!card) {
+      return;
+    }
+    card.dataset.state = "interrupted";
+    card.classList.add("is-done", "is-interrupted");
+    card.classList.remove("has-body", "is-collapsed", "is-streaming");
+    const wrap = card.querySelector(".agent-think-wrap");
+    spin().setState(wrap, "complete");
+    const label = card.querySelector("[data-role=label]");
+    if (label) {
+      label.textContent = "Agent interrupted";
+    }
+    const timer = card.querySelector("[data-role=timer]");
+    if (timer) {
+      timer.textContent = Number(elapsedSec).toFixed(1) + "s";
+    }
+    const body = card.querySelector("[data-role=body]");
+    if (body) {
+      body.innerHTML = "";
+      body.style.display = "none";
+    }
+  }
+
   function createAgentCard() {
     const el = document.createElement("div");
     el.className = "reply";
@@ -182,6 +209,7 @@
     updateThinkBody,
     setThinkTimer,
     finalizeThink,
+    interruptThink,
     createAgentCard,
     updateAgentBody,
     createErrorCard,

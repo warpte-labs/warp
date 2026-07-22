@@ -20,6 +20,7 @@
    *   applyAuth: (msg: object) => void,
    *   applyContext?: (msg: object) => void,
    *   applyPermissionMode?: (msg: object) => void,
+   *   applyLicense?: (msg: object) => void,
    *   showToast?: (text: string) => void,
    *   settingsUi?: object,
    * }} deps
@@ -38,6 +39,7 @@
       applyAuth,
       applyContext,
       applyPermissionMode,
+      applyLicense,
       showToast,
       settingsUi,
     } = deps;
@@ -64,7 +66,26 @@
             kind: msg.kind,
             target: msg.target,
             label: msg.label,
+            subagentId: msg.subagentId,
+            subagentType: msg.subagentType,
+            isSpawn: msg.isSpawn,
           });
+          break;
+        case "task":
+          W.tasksState = msg.snapshot || W.tasksState;
+          if (msg.task) {
+            transcript.upsertSubagent(msg.task);
+          }
+          break;
+        case "tasks":
+          W.tasksState = {
+            tasks: msg.tasks || [],
+            running: msg.running || 0,
+            updatedAt: msg.updatedAt || Date.now(),
+          };
+          if (typeof transcript.applyTasksSnapshot === "function") {
+            transcript.applyTasksSnapshot(W.tasksState);
+          }
           break;
         case "fileList":
           mention.onFiles(msg.files || []);
@@ -72,21 +93,44 @@
         case "turn":
           if (msg.phase === "end") {
             transcript.endTurn();
+            composer.setBusy(false);
             composer.drainQueue();
+          } else if (msg.phase === "start") {
+            composer.setBusy(true);
           }
+          break;
+        case "cancelled":
+          if (typeof transcript.interrupt === "function") {
+            transcript.interrupt();
+          }
+          composer.setBusy(false);
           break;
         case "error":
           transcript.showError(msg.text || "Error");
+          composer.setBusy(false);
+          break;
+        case "notice":
+          // Normal white assistant-style reply (trial expired, etc.) — not red error
+          if (typeof transcript.showNotice === "function") {
+            transcript.showNotice(msg.text || "", {
+              action: msg.action || "",
+              actionLabel: msg.actionLabel || "Upgrade",
+            });
+          } else {
+            transcript.appendMessage(msg.text || "");
+            transcript.endTurn();
+          }
           break;
         case "status":
           break;
         case "historyList":
-          historyUi.renderList(msg.sessions || []);
+          historyUi.renderList(msg.sessions || [], { live: !!msg.live });
           break;
         case "historyDetail":
           historyUi.renderDetail({
             session: msg.session || null,
             messages: msg.messages || [],
+            live: !!msg.live,
           });
           break;
         case "historyError":
@@ -135,6 +179,11 @@
         case "permissionMode":
           if (typeof applyPermissionMode === "function") {
             applyPermissionMode(msg);
+          }
+          break;
+        case "license":
+          if (typeof applyLicense === "function") {
+            applyLicense(msg);
           }
           break;
         case "toast":

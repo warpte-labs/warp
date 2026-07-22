@@ -1,7 +1,12 @@
 {
   "name": "warp",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
-  "description": "Warp landing page + API (warpte.com) — Stripe billing for Warp Pro"
+  "description": "Warp landing page + API (warpte.com) — Stripe billing for Warp Pro",
+  "dependencies": {
+    "@upstash/redis": "^1.38.0",
+    "ably": "^2.25.0",
+    "pg": "^8.13.1"
+  }
 }

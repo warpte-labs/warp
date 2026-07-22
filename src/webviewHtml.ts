@@ -80,6 +80,11 @@ export function buildChatHtml(
       <div class="composer-slot" style="position:relative">
         <div class="compact-bar" id="compact-bar" hidden></div>
         <div class="prompt-queue" id="prompt-queue" hidden></div>
+        <!-- Free trial expired — sits above the message input -->
+        <div class="license-bar" id="license-bar" hidden>
+          <div class="license-bar-text" id="license-bar-text">Free trial expired. Upgrade to Pro ($5/mo) to keep chatting.</div>
+          <button type="button" class="license-bar-btn" id="license-bar-upgrade">Upgrade</button>
+        </div>
         <div class="sb">
           <div class="tray" id="tray"></div>
           <div class="sb-input">
@@ -128,8 +133,11 @@ export function buildChatHtml(
       <div class="settings-body" id="settings-list"></div>
     </div>
 
-    <!-- Global toast — sits above chat + settings -->
-    <div class="toast" id="toast" hidden></div>
+    <!-- Global toast — sticky until dismissed (X) -->
+    <div class="toast" id="toast" hidden role="status">
+      <span class="toast-text" id="toast-text"></span>
+      <button type="button" class="toast-close" id="toast-close" aria-label="Dismiss">×</button>
+    </div>
   </div>
 
   <input id="file-image" class="hidden-file" type="file" accept="image/*" multiple />
@@ -142,8 +150,10 @@ export function buildChatHtml(
   <script nonce="${nonce}" src="${script("dom.js")}"></script>
   <script nonce="${nonce}" src="${script("markdown.js")}"></script>
   <script nonce="${nonce}" src="${script("spinner.js")}"></script>
+  <script nonce="${nonce}" src="${script("agentFill.js")}"></script>
   <script nonce="${nonce}" src="${script("cards.js")}"></script>
   <script nonce="${nonce}" src="${script("tools.js")}"></script>
+  <script nonce="${nonce}" src="${script("subagents.js")}"></script>
   <script nonce="${nonce}" src="${script("transcript.js")}"></script>
   <script nonce="${nonce}" src="${script("hero.js")}"></script>
   <script nonce="${nonce}" src="${script("history.js")}"></script>

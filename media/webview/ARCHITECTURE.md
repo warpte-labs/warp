@@ -16,8 +16,8 @@ Modular layout. Prefer adding a small module over growing glue files.
 | `webviewMessages.ts` | Webview → host message router |
 | `webviewHtml.ts` | HTML shell + asset URIs (`assetV` cache-bust) |
 | `agentProcess.ts` | Turn orchestration, mock mode, YOLO toggle |
-| `acpClient.ts` | ACP transport (stdio JSON-RPC) |
-| `acp/*` | content, prompts, tools, models, clientRequests |
+| `acpClient.ts` | ACP transport (stdio JSON-RPC) + task emit |
+| `acp/*` | content, prompts, tools, models, clientRequests, **tasks** (multi-agent registry) |
 | `sessionHistory.ts` | Local `~/.grok/sessions` list/read |
 | `workspaceFiles.ts` | `@` file search |
 | `auth.ts` / `paths.ts` | Auth + binary/cwd resolution |
@@ -38,6 +38,9 @@ Modular layout. Prefer adding a small module over growing glue files.
 | `attach.js` | Image/file tray |
 | `transcript.js` | Turn transcript |
 | `tools.js` | Tool rows |
+| `agentFill.js` | Radial fill circle (no spin/pulse), per-agent colors |
+| `subagents.js` | Multi-agent blocks (reason + steps with fill dots) |
+| `hostBridge.js` | `task` / `tasks` → transcript.upsertSubagent |
 | `cards.js` | User / think / agent DOM |
 | `history.js` | History panel |
 | `modelSelector.js` | Model + effort |

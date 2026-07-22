@@ -1,6 +1,6 @@
 /**
  * GET /api/ably/token?installId=
- * Subscribe-only Ably token for realtime license unlock.
+ * Subscribe-only Ably token for Warp extension realtime license.
  */
 import { ablyConfigured, createSubscribeToken } from "../../lib/ably.js";
 
@@ -27,10 +27,7 @@ export default async function handler(req, res) {
     if (!ablyConfigured()) {
       res.statusCode = 503;
       return res.end(
-        JSON.stringify({
-          ok: false,
-          error: "Ably not configured (set ABLY_API_KEY on Vercel)",
-        })
+        JSON.stringify({ ok: false, error: "Realtime not configured" })
       );
     }
     const url = new URL(req.url || "/", "http://localhost");
@@ -51,12 +48,19 @@ export default async function handler(req, res) {
       JSON.stringify({
         ok: true,
         channel: out.channel,
+        token: out.token,
+        expires: out.expires,
         tokenRequest: out.tokenRequest,
       })
     );
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Token failed";
+    console.error("[ably/token]", e);
     res.statusCode = 500;
-    return res.end(JSON.stringify({ ok: false, error: msg }));
+    return res.end(
+      JSON.stringify({
+        ok: false,
+        error: e instanceof Error ? e.message : "Token error",
+      })
+    );
   }
 }

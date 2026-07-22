@@ -7,6 +7,7 @@ import type { WarpViewProvider } from "./webviewProvider";
 import { loginWithCli, logoutWithCli } from "./auth";
 import { binaryLooksAvailable, resolveBinary } from "./paths";
 import { errMsg } from "./util";
+import { forceExpireTrial, forceResetTrial } from "./license";
 
 export type CommandDeps = {
   context: vscode.ExtensionContext;
@@ -41,6 +42,20 @@ export function registerCommands(deps: CommandDeps): vscode.Disposable[] {
       agent.stop();
       await logoutWithCli(output);
       provider.pushAuthStatus();
+    }),
+    vscode.commands.registerCommand("warp.debugExpireTrial", async () => {
+      const st = await forceExpireTrial();
+      void vscode.window.showWarningMessage(
+        `Warp trial forced expired (${st.label}). Send a message to test the lock.`
+      );
+      log(`license debug: expired → ${st.kind} ${st.detail}`);
+    }),
+    vscode.commands.registerCommand("warp.debugResetTrial", async () => {
+      const st = await forceResetTrial();
+      void vscode.window.showInformationMessage(
+        `Warp trial reset (${st.label}). First message starts a new 7-day trial.`
+      );
+      log(`license debug: reset → ${st.kind} ${st.detail}`);
     }),
   ];
 }

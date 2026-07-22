@@ -11,7 +11,7 @@
     {
       id: "account",
       label: "Account & billing",
-      dek: "Plan, trial, Subscribe ($5/mo), sign-in.",
+      dek: "Plan, upgrade to Pro, or manage subscription.",
     },
     {
       id: "permissions",
@@ -83,6 +83,8 @@
     let open = false;
     /** @type {string | null} */
     let catId = null;
+    /** Host is watching log + Ably for Usage */
+    let usageLiveOn = false;
 
     // Load Off state before any host message
     loadLocalPrefs();
@@ -91,7 +93,10 @@
 
     function setOpen(v) {
       open = !!v;
-      if (!open) catId = null;
+      if (!open) {
+        stopUsageLive();
+        catId = null;
+      }
       opts.root.classList.toggle("settings-open", open);
       opts.panel.classList.toggle("hidden", !open);
       opts.panel.setAttribute("aria-hidden", open ? "false" : "true");
@@ -105,12 +110,36 @@
       }
     }
 
+    function stopUsageLive() {
+      if (!usageLiveOn) return;
+      usageLiveOn = false;
+      opts.post({ type: "usageUnsubscribe" });
+    }
+
+    function startUsageLive(range) {
+      usageLiveOn = true;
+      opts.post({
+        type: "usageSubscribe",
+        range: range || "30d",
+      });
+    }
+
     function isOpen() {
       return open;
     }
 
     function apply(data) {
       if (!data || typeof data !== "object") return;
+      // Snapshot account fields before merge — avoid full re-render that restarts ring CSS
+      const prevAccount = {
+        planKind: snapshot.planKind,
+        planLabel: snapshot.planLabel,
+        planDetail: snapshot.planDetail,
+        planPro: snapshot.planPro,
+        billingEmail: snapshot.billingEmail,
+        signedIn: snapshot.signedIn,
+        version: snapshot.version,
+      };
       // Host may send showThinking:true (default) and wipe Off — skip UI toggles.
       Object.keys(data).forEach(function (k) {
         if (k === "type") return;
@@ -120,14 +149,33 @@
       // Re-render only when not sitting on the transcript toggles page
       // (full re-render was destroying Off mid-click via host echo).
       // Usage has its own applyUsage path.
+      if (open && catId === "account") {
+        const same =
+          prevAccount.planKind === snapshot.planKind &&
+          prevAccount.planLabel === snapshot.planLabel &&
+          prevAccount.planDetail === snapshot.planDetail &&
+          prevAccount.planPro === snapshot.planPro &&
+          prevAccount.billingEmail === snapshot.billingEmail &&
+          prevAccount.signedIn === snapshot.signedIn &&
+          prevAccount.version === snapshot.version;
+        if (same) return; // keep ring animation running
+        render();
+        return;
+      }
       if (open && catId !== "transcript" && catId !== "usage") {
         render();
       }
     }
 
-    /** Host → type: "usage" while Settings → Usage is open */
+    /** Host → type: "usage" while Settings → Usage is open (live or first paint) */
     function applyUsage(data) {
       if (!open || catId !== "usage") return;
+      const bodyEl = opts.list.querySelector(".set-usage-body");
+      const hasUi = bodyEl && bodyEl.querySelector(".usage-wrap");
+      if (hasUi && data && data.live && W.usage && typeof W.usage.applyLive === "function") {
+        W.usage.applyLive(data);
+        return;
+      }
       paintUsage(data || {});
     }
 
@@ -142,6 +190,7 @@
     }
 
     function renderList() {
+      stopUsageLive();
       setTitle("Settings");
       opts.list.innerHTML =
         '<div class="set-min">' +
@@ -174,7 +223,7 @@
       }
       setTitle(cat.label);
 
-      // Usage is async from host — own layout (not two-tone form fields)
+      // Usage is async from host — live via log watch + Ably (no Refresh)
       if (id === "usage") {
         opts.list.innerHTML =
           (W.usage && W.usage.loadingHtml
@@ -184,9 +233,12 @@
           W.usage && typeof W.usage.getRange === "function"
             ? W.usage.getRange()
             : "30d";
-        opts.post({ type: "getUsage", range: r });
+        startUsageLive(r);
         return;
       }
+
+      // Any non-usage detail → stop live feed
+      stopUsageLive();
 
       // Billing: re-sync plan from Stripe when opening Account
       if (id === "account") {
@@ -291,70 +343,89 @@
           "Auto-detect"
         );
       } else if (id === "account") {
-        // ── Billing (always visible) ──
+        // Outline soft containers (mockup 09) — no row dividers
         const isPro = !!(s.planPro || s.planKind === "pro");
+        // Pro = green; expired = off-white (not red); trial = default text
         const planTone = isPro
           ? "ok"
           : s.planKind === "expired"
-            ? "bad"
+            ? "muted"
             : "";
-        body += fieldRo(
-          "Warp plan",
-          String(s.planLabel || "Free trial"),
-          planTone
-        );
-        body +=
-          '<div class="set-tt-blk"><div class="set-h">' +
-          esc(
-            String(
-              s.planDetail ||
-                "7-day free trial · then Warp Pro $5/mo"
-            )
-          ) +
-          "</div></div>";
-        if (s.billingEmail) {
-          body += fieldRo("Billing email", String(s.billingEmail), "");
-        }
-        // Always show Subscribe unless confirmed Pro (stale cache fixed via syncPlan)
-        if (!isPro) {
-          body += fieldAction(
-            "subscribe",
-            "Warp Pro",
-            "$5/mo · full access after trial · cancel anytime",
-            "Subscribe"
-          );
-        }
-        body += fieldAction(
-          "refreshPlan",
-          "Refresh plan",
-          "Sync status from Stripe after checkout or cancel",
-          "Refresh"
-        );
-        body += fieldAction(
-          "manageBilling",
-          "Manage billing",
-          "Stripe portal — invoices, cancel, payment method",
-          "Manage"
+        const planLabel = String(s.planLabel || "Free trial");
+        const planDetail = String(
+          s.planDetail ||
+            (isPro
+              ? "$5/mo · active · cancel anytime"
+              : "7 days free · starts on first message · then $5/mo")
         );
 
-        // ── Grok account ──
-        body += fieldRo(
-          "Grok signed in",
-          s.signedIn ? "Yes" : "No",
-          s.signedIn ? "ok" : "bad"
-        );
-        if (s.version) {
-          body += fieldRo("Warp version", String(s.version), "");
+        // Plan card: orange ring + dark fill only when trial/pro (not expired)
+        // Expired = same plain outline card as Grok account
+        const isExpired = s.planKind === "expired";
+        const planCardClass = isExpired
+          ? "set-card"
+          : "set-card set-card-plan";
+        let planInner =
+          '<div class="set-k">Warp plan</div>' +
+          '<div class="set-ro' +
+          (planTone ? " " + planTone : "") +
+          '">' +
+          esc(planLabel) +
+          "</div>" +
+          '<div class="set-h">' +
+          esc(planDetail) +
+          "</div>";
+        // Billing email only for Pro (paid) — free/trial/expired don't need it
+        if (isPro && s.billingEmail) {
+          planInner +=
+            '<div class="set-meta-row"><span class="set-meta-k">Billing</span><span class="set-meta-v">' +
+            esc(String(s.billingEmail)) +
+            "</span></div>";
         }
-        body += fieldAction(
-          s.signedIn ? "signOut" : "signIn",
-          s.signedIn ? "Sign out of Grok" : "Sign in with Grok",
-          s.signedIn
-            ? "Clear Grok session on this machine"
-            : "Open Grok login"
-        );
+        if (isPro) {
+          planInner +=
+            '<button type="button" class="set-btn set-btn-soft set-act" data-action="manageBilling">Manage billing</button>';
+        } else {
+          planInner +=
+            '<button type="button" class="set-btn set-btn-soft set-act" data-action="subscribe">Upgrade to Pro</button>';
+        }
+        if (isExpired) {
+          body += '<div class="' + planCardClass + '">' + planInner + "</div>";
+        } else {
+          body +=
+            '<div class="' +
+            planCardClass +
+            '"><div class="set-card-plan-inner">' +
+            planInner +
+            "</div></div>";
+        }
+
+        // ── Grok card ──
+        let grokCard =
+          '<div class="set-card">' +
+          '<div class="set-k">Grok account</div>' +
+          '<div class="set-ro' +
+          (s.signedIn ? " ok" : " bad") +
+          '">' +
+          (s.signedIn ? "Signed in" : "Not signed in") +
+          "</div>";
+        if (s.version) {
+          grokCard +=
+            '<div class="set-meta-row"><span class="set-meta-k">Warp</span><span class="set-meta-v">v' +
+            esc(String(s.version)) +
+            "</span></div>";
+        }
+        grokCard +=
+          '<button type="button" class="set-btn set-btn-ghost set-act" data-action="' +
+          (s.signedIn ? "signOut" : "signIn") +
+          '">' +
+          esc(s.signedIn ? "Sign out" : "Sign in with Grok") +
+          "</button></div>";
+        body += grokCard;
       }
 
+      const bodyClass =
+        id === "account" ? "set-tt-body set-tt-body-cards" : "set-tt-body";
       opts.list.innerHTML =
         '<div class="set-tt">' +
         '<div class="set-tt-band">' +
@@ -365,7 +436,9 @@
         esc(cat.dek) +
         "</p>" +
         "</div>" +
-        '<div class="set-tt-body">' +
+        '<div class="' +
+        bodyClass +
+        '">' +
         body +
         "</div></div>";
 
@@ -647,32 +720,15 @@
       const bodyEl = opts.list.querySelector(".set-usage-body");
       if (W.usage && typeof W.usage.renderInto === "function" && bodyEl) {
         W.usage.renderInto(bodyEl, data, {
-          onRefresh: function () {
-            requestUsage();
-          },
           onRange: function (r) {
-            opts.post({ type: "getUsage", range: r });
+            // Live subscription already active — only change range
+            opts.post({ type: "getUsage", range: r, rangeOnly: true });
           },
         });
       } else if (bodyEl) {
         bodyEl.innerHTML =
           '<div class="usage-empty">Usage module missing</div>';
       }
-    }
-
-    function requestUsage() {
-      const bodyEl = opts.list.querySelector(".set-usage-body");
-      if (bodyEl) {
-        bodyEl.innerHTML =
-          W.usage && W.usage.loadingHtml
-            ? W.usage.loadingHtml()
-            : '<div class="usage-loading">Refreshing…</div>';
-      }
-      const r =
-        W.usage && typeof W.usage.getRange === "function"
-          ? W.usage.getRange()
-          : "30d";
-      opts.post({ type: "getUsage", range: r });
     }
 
     function notifyPrefs() {

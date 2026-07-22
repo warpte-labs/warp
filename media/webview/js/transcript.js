@@ -174,6 +174,14 @@
         /** Text for the current agent card only (may split after tools) */
         segmentAnswer: "",
         toolEls: {},
+        /** Multi-agent blocks by task id */
+        agentBlocks: {},
+        agentStack: null,
+        agentSeq: 0,
+        agentWaitEl: null,
+        /** Parent thought/message while agents run — flush once when done */
+        agentHoldThought: "",
+        agentHoldMessage: "",
         thought: "",
         answer: "",
         t0: Date.now(),
@@ -185,6 +193,90 @@
       this.ensureThinking();
       this._notifyEmpty();
       this.scrollToBottom({ force: true });
+    }
+
+    /** True if any accordion agent is still running. */
+    _hasRunningAgents() {
+      const a = this.active;
+      if (!a || !a.agentBlocks) return false;
+      for (const k of Object.keys(a.agentBlocks)) {
+        const el = a.agentBlocks[k];
+        if (el && el.dataset.status === "running") return true;
+      }
+      return false;
+    }
+
+    _runningAgentCount() {
+      const a = this.active;
+      if (!a || !a.agentBlocks) return 0;
+      let n = 0;
+      for (const k of Object.keys(a.agentBlocks)) {
+        const el = a.agentBlocks[k];
+        if (el && el.dataset.status === "running") n++;
+      }
+      return n;
+    }
+
+    _ensureAgentStack() {
+      const a = this.active;
+      if (!a) return null;
+      if (!a.agentStack || !a.agentStack.isConnected) {
+        a.agentStack = document.createElement("div");
+        a.agentStack.className = "agent-stack";
+        this.root.appendChild(a.agentStack);
+      }
+      return a.agentStack;
+    }
+
+    /** Single quiet line under the stack while agents work — no thought spam. */
+    _syncAgentWaitLine() {
+      const a = this.active;
+      if (!a) return;
+      const n = this._runningAgentCount();
+      if (n <= 0) {
+        if (a.agentWaitEl && a.agentWaitEl.isConnected) {
+          a.agentWaitEl.remove();
+        }
+        a.agentWaitEl = null;
+        return;
+      }
+      const stack = this._ensureAgentStack();
+      if (!a.agentWaitEl || !a.agentWaitEl.isConnected) {
+        a.agentWaitEl = document.createElement("div");
+        a.agentWaitEl.className = "agent-wait-line";
+        // Keep wait line right under the stack
+        if (stack && stack.nextSibling) {
+          this.root.insertBefore(a.agentWaitEl, stack.nextSibling);
+        } else {
+          this.root.appendChild(a.agentWaitEl);
+        }
+      }
+      a.agentWaitEl.textContent =
+        n === 1 ? "Waiting for 1 agent…" : "Waiting for " + n + " agents…";
+    }
+
+    /**
+     * When all agents finish: drop wait noise; show only a real parent summary.
+     */
+    _flushAfterAgents() {
+      const a = this.active;
+      if (!a) return;
+      this._syncAgentWaitLine();
+      const heldMsg = String(a.agentHoldMessage || "").trim();
+      a.agentHoldThought = "";
+      a.agentHoldMessage = "";
+      // Drop short wait chatter; keep a substantial final report
+      if (heldMsg && heldMsg.length > 80 && !isAgentWaitChatter(heldMsg)) {
+        if (a.thinkEl && !a.thoughtSettled) {
+          this.completeThought();
+        }
+        a.agentEl = W.cards.createAgentCard();
+        this.root.appendChild(a.agentEl);
+        a.segmentAnswer = heldMsg;
+        a.answer = (a.answer || "") + heldMsg;
+        W.cards.updateAgentBody(a.agentEl, a.segmentAnswer);
+      }
+      this.scrollToBottom();
     }
 
     ensureThinking() {
@@ -226,6 +318,16 @@
       if (!a || !delta) {
         return;
       }
+      // Grok sometimes streams [subagent:…] status as thought — drop pure noise
+      if (isSubagentStatusNoise(delta)) {
+        return;
+      }
+      // While agents run, don't split the UI with fragmented parent thoughts
+      if (this._hasRunningAgents()) {
+        a.agentHoldThought = (a.agentHoldThought || "") + delta;
+        this._syncAgentWaitLine();
+        return;
+      }
       this.ensureThinking();
       a.thought += delta;
       W.cards.updateThinkBody(a.thinkEl, a.thought);
@@ -254,6 +356,16 @@
       if (!a || !delta) {
         return;
       }
+      if (isSubagentStatusNoise(delta)) {
+        return;
+      }
+      // Parallel agent output often interleaves into parent stream — hold it
+      // until all agent accordions finish so the UI is not shredded.
+      if (this._hasRunningAgents()) {
+        a.agentHoldMessage = (a.agentHoldMessage || "") + delta;
+        this._syncAgentWaitLine();
+        return;
+      }
       if (a.thinkEl && !a.thoughtSettled) {
         this.completeThought();
       }
@@ -276,15 +388,41 @@
 
     /**
      * Tool / command activity (read, run, search, …).
-     * Always append in time order (never jump above the agent message).
-     * New rows are staggered so fast tool bursts still feel sequential.
-     * @param {{ id?: string, title?: string, status?: string, kind?: string, target?: string, label?: string }} p
+     * While a subagent is running, steps nest under that block (fill circles).
+     * Spawn / control tools never show as main orange pulse rows.
+     * @param {{
+     *   id?: string, title?: string, status?: string, kind?: string,
+     *   target?: string, label?: string,
+     *   subagentId?: string, subagentType?: string, isSpawn?: boolean
+     * }} p
      */
     upsertTool(p) {
       const a = this.active;
       if (!a) {
         return;
       }
+      if (!a.agentBlocks) a.agentBlocks = {};
+
+      // Parent spawn → open/update subagent block only
+      if (
+        p &&
+        (p.isSpawn ||
+          (W.subagents && W.subagents.isMultiAgentTool(p)) ||
+          (W.subagents && W.subagents.isSpawnLike(p)))
+      ) {
+        this._spawnFromTool(p);
+        return;
+      }
+
+      // Child step: explicit tag, or nest under latest running subagent
+      const block = this._resolveSubagentBlock(p);
+      if (block && W.subagents) {
+        W.subagents.upsertStep(block, p);
+        // Stay closed unless user opened it
+        this.scrollToBottom();
+        return;
+      }
+
       const id = p.id || "tool-" + Date.now();
       if (!a.toolEls) {
         a.toolEls = {};
@@ -297,10 +435,196 @@
         this._enqueueToolReveal(el);
       } else {
         W.tools.updateToolRow(el, p);
-        // Already visible — keep live status updates snappy
         if (el.isConnected) {
           this.scrollToBottom();
         }
+      }
+    }
+
+    /**
+     * Open subagent card from a parent spawn tool event.
+     * @param {object} p
+     */
+    _spawnFromTool(p) {
+      const id =
+        String(p.subagentId || "").trim() ||
+        String(p.id || "").trim() ||
+        "agent-" + Date.now();
+      const title = String(p.title || p.label || p.target || "Subagent").trim();
+      // Avoid treating poll/kill as a new agent card
+      if (W.subagents && W.subagents.isControlTool(p) && !p.isSpawn) {
+        // Mark matching agent done/cancelled if we can
+        const block = this._findBlockById(p.subagentId || p.target);
+        if (block && /kill|cancel/i.test(String(p.kind || p.title || ""))) {
+          W.subagents.updateBlock(block, {
+            ...(block._task || {}),
+            status: "cancelled",
+          });
+        }
+        return;
+      }
+      this.upsertSubagent({
+        id: id,
+        toolCallId: p.id,
+        kind: "subagent",
+        status: p.status || "running",
+        description: title,
+        subagentType: p.subagentType || "general-purpose",
+        background: true,
+      });
+    }
+
+    /**
+     * @param {object} p
+     * @returns {HTMLElement|null}
+     */
+    _resolveSubagentBlock(p) {
+      if (!this.active || !this.active.agentBlocks) return null;
+      const sid = String(p?.subagentId || "").trim();
+      if (sid) {
+        const hit =
+          this.active.agentBlocks[sid] || this._findBlockByPrefix(sid);
+        if (hit) return hit;
+      }
+      // Nest under the most recently updated running subagent
+      return this._latestRunningSubagent();
+    }
+
+    _findBlockById(id) {
+      if (!id || !this.active?.agentBlocks) return null;
+      return (
+        this.active.agentBlocks[id] || this._findBlockByPrefix(String(id))
+      );
+    }
+
+    _findBlockByPrefix(id) {
+      const blocks = this.active?.agentBlocks || {};
+      const s = String(id || "");
+      if (!s) return null;
+      // short id 019f8b30 matches full uuid
+      for (const k of Object.keys(blocks)) {
+        if (k === s || k.startsWith(s) || s.startsWith(k.slice(0, 8))) {
+          return blocks[k];
+        }
+      }
+      return null;
+    }
+
+    _latestRunningSubagent() {
+      const blocks = this.active?.agentBlocks || {};
+      let best = null;
+      let bestT = 0;
+      for (const k of Object.keys(blocks)) {
+        const el = blocks[k];
+        if (!el || el.dataset.status === "done" || el.dataset.status === "error") {
+          continue;
+        }
+        const t = el._task?.updatedAt || el._t0 || 0;
+        if (t >= bestT) {
+          bestT = t;
+          best = el;
+        }
+      }
+      return best;
+    }
+
+    /**
+     * Multi-agent accordion row in the turn stack.
+     * @param {object} task
+     */
+    upsertSubagent(task) {
+      if (!task || !W.subagents) return;
+      if (!this.active) {
+        this.active = {
+          thinkEl: null,
+          agentEl: null,
+          segmentAnswer: "",
+          toolEls: {},
+          agentBlocks: {},
+          agentStack: null,
+          agentSeq: 0,
+          thought: "",
+          answer: "",
+          t0: Date.now(),
+          timerIv: null,
+          thoughtSettled: true,
+        };
+      }
+      const a = this.active;
+      if (!a.agentBlocks) a.agentBlocks = {};
+      if (typeof a.agentSeq !== "number") a.agentSeq = 0;
+
+      const id = String(task.id || task.toolCallId || "");
+      if (!id) return;
+
+      let el = a.agentBlocks[id];
+      if (!el && task.toolCallId && a.agentBlocks[task.toolCallId]) {
+        el = a.agentBlocks[task.toolCallId];
+        delete a.agentBlocks[task.toolCallId];
+        a.agentBlocks[id] = el;
+      }
+      if (!el) {
+        el = this._findBlockByPrefix(id);
+        if (el) {
+          const oldId = el.dataset.id;
+          if (oldId && oldId !== id) {
+            delete a.agentBlocks[oldId];
+            a.agentBlocks[id] = el;
+          }
+        }
+      }
+
+      const wasRunning = this._hasRunningAgents();
+      if (!el) {
+        // Don't spawn empty shell agents that immediately read "0.0s · Done"
+        // without work — wait for running status or a real description.
+        const st0 = String(task.status || "running").toLowerCase();
+        const terminal0 =
+          st0 === "completed" ||
+          st0 === "done" ||
+          st0 === "failed" ||
+          st0 === "error" ||
+          st0 === "cancelled";
+        if (terminal0 && !task.description) {
+          return;
+        }
+        a.agentSeq += 1;
+        el = W.subagents.createBlock(task, { agentIndex: a.agentSeq });
+        a.agentBlocks[id] = el;
+        if (a.thinkEl && !a.thoughtSettled) {
+          this.completeThought();
+        }
+        const stack = this._ensureAgentStack();
+        el.classList.add("tool-row-enter");
+        stack.appendChild(el);
+        requestAnimationFrame(() => {
+          if (el.isConnected) {
+            el.classList.add("tool-row-in");
+            el.classList.remove("tool-row-enter");
+          }
+        });
+      } else {
+        W.subagents.updateBlock(el, task);
+      }
+      if (el._task) {
+        el._task.updatedAt = task.updatedAt || Date.now();
+      }
+      this._syncAgentWaitLine();
+      // Transition: agents were running → none running → flush held parent text
+      if (wasRunning && !this._hasRunningAgents()) {
+        this._flushAfterAgents();
+      }
+      this.scrollToBottom();
+    }
+
+    /**
+     * Apply full tasks snapshot (idempotent upserts).
+     * @param {{ tasks?: object[] }} snapshot
+     */
+    applyTasksSnapshot(snapshot) {
+      const list = snapshot && Array.isArray(snapshot.tasks) ? snapshot.tasks : [];
+      for (let i = 0; i < list.length; i++) {
+        this.upsertSubagent(list[i]);
       }
     }
 
@@ -392,6 +716,62 @@
     }
 
     /**
+     * User hit Stop — mark think as interrupted, cancel running agents.
+     */
+    interrupt() {
+      const a = this.active;
+      if (!a) return;
+      a.agentHoldThought = "";
+      a.agentHoldMessage = "";
+      if (a.agentWaitEl && a.agentWaitEl.isConnected) {
+        a.agentWaitEl.remove();
+      }
+      a.agentWaitEl = null;
+      if (a.agentBlocks) {
+        for (const k of Object.keys(a.agentBlocks)) {
+          const el = a.agentBlocks[k];
+          if (el && el.dataset.status === "running" && W.subagents) {
+            W.subagents.updateBlock(el, {
+              ...(el._task || {}),
+              status: "cancelled",
+            });
+          }
+        }
+      }
+      if (a.thinkEl && !a.thoughtSettled) {
+        if (a.timerIv) {
+          clearInterval(a.timerIv);
+          a.timerIv = null;
+        }
+        a.thoughtSettled = true;
+        const elapsed = (Date.now() - a.t0) / 1000;
+        if (W.cards && typeof W.cards.interruptThink === "function") {
+          W.cards.interruptThink(a.thinkEl, elapsed);
+        } else {
+          this.completeThought();
+        }
+      }
+      // Settle agent think lines too
+      if (a.agentBlocks) {
+        for (const k of Object.keys(a.agentBlocks)) {
+          const el = a.agentBlocks[k];
+          const label = el && el.querySelector('[data-role="think-label"]');
+          if (label && el.dataset.status === "error") {
+            label.textContent = "Agent interrupted";
+          }
+          const meta = el && el.querySelector('[data-role="meta"]');
+          if (meta && el.dataset.status === "error") {
+            const t = meta.textContent || "";
+            if (!/Failed|Done/i.test(t)) {
+              meta.textContent = t.replace(/\s*·.*$/, "") + " · Failed";
+            }
+          }
+        }
+      }
+      this.scrollToBottom();
+    }
+
+    /**
      * @param {string} text
      */
     showError(text) {
@@ -399,6 +779,58 @@
       this.root.appendChild(W.cards.createErrorCard(text));
       this._notifyEmpty();
       this.scrollToBottom();
+    }
+
+    /**
+     * Normal white "grok" reply (no red error styling) — e.g. trial expired.
+     * @param {string} text
+     * @param {{ action?: string, actionLabel?: string }} [opts]
+     */
+    showNotice(text, opts) {
+      this.endActiveTimers();
+      const a = this.active;
+      // Drop empty thinking chrome if we never received real thought tokens
+      if (a && a.thinkEl && !a.thoughtSettled && !(a.thought || "").trim()) {
+        try {
+          a.thinkEl.remove();
+        } catch (e) {
+          /* ignore */
+        }
+        a.thinkEl = null;
+      } else if (a && a.thinkEl && !a.thoughtSettled) {
+        this.completeThought();
+      }
+      const el = W.cards.createAgentCard();
+      W.cards.updateAgentBody(el, text || "");
+      const action = opts && opts.action;
+      const actionLabel = (opts && opts.actionLabel) || "Upgrade";
+      if (action) {
+        const row = document.createElement("div");
+        row.className = "notice-actions";
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "notice-upgrade-btn";
+        btn.textContent = actionLabel;
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          window.dispatchEvent(
+            new CustomEvent("warp-notice-action", {
+              detail: { action: action },
+            })
+          );
+        });
+        row.appendChild(btn);
+        el.appendChild(row);
+      }
+      this.root.appendChild(el);
+      if (a) {
+        a.agentEl = el;
+        a.segmentAnswer = text || "";
+        a.answer = (a.answer || "") + (text || "");
+      }
+      this._notifyEmpty();
+      this.scrollToBottom({ force: true });
     }
 
     /**
@@ -494,6 +926,41 @@
    *   thoughtSettled: boolean
    * }} ActiveTurn
    */
+
+  /**
+   * Pure subagent status lines (not real reasoning) — hide from main stream.
+   * e.g. `[subagent:explore] Explore codebase structure (019f8b30)`
+   */
+  function isSubagentStatusNoise(text) {
+    const t = String(text || "").trim();
+    if (!t) return false;
+    // Whole chunk is just one or more subagent tags
+    if (/^(\[subagent:[^\]]+\][^\n]*)+$/i.test(t)) return true;
+    if (/^\[subagent:[^\]]+\]/i.test(t) && t.length < 160 && !t.includes("\n\n")) {
+      return true;
+    }
+    return false;
+  }
+
+  /** Parent wait chatter while subagents run — never worth flushing. */
+  function isAgentWaitChatter(text) {
+    const t = String(text || "").trim().toLowerCase();
+    if (!t) return true;
+    if (t.length < 60) {
+      if (
+        /waiting|running|spawn|four explore|agents are|to finish|digging into/.test(
+          t
+        )
+      ) {
+        return true;
+      }
+    }
+    // Heavily interleaved garbage often has mid-word splits from parallel streams
+    const spaces = (t.match(/\s/g) || []).length;
+    const weird = (t.match(/[a-z][A-Z]/g) || []).length;
+    if (t.length > 200 && weird > 12 && spaces < t.length / 8) return true;
+    return false;
+  }
 
   function formatTokLocal(n) {
     if (!Number.isFinite(n) || n < 0) return "—";

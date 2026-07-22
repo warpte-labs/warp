@@ -47,6 +47,11 @@
     let histIdx = -1;
     let histDraft = "";
 
+    const ICON_SEND =
+      '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19V5m0 0-6 6m6-6 6 6"/></svg>';
+    const ICON_STOP =
+      '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1.5" fill="currentColor" stroke="currentColor" stroke-width="1"/></svg>';
+
     function toast(text) {
       if (typeof showToast === "function") showToast(text);
       else if (els.input) {
@@ -66,10 +71,23 @@
     }
 
     function setBusy(v) {
-      busy = v;
-      if (els.send) {
-        els.send.disabled = false;
+      busy = !!v;
+      if (!els.send) return;
+      els.send.disabled = false;
+      els.send.classList.toggle("is-stop", busy);
+      els.send.title = busy ? "Stop" : "Send";
+      els.send.setAttribute("aria-label", busy ? "Stop" : "Send");
+      els.send.innerHTML = busy ? ICON_STOP : ICON_SEND;
+    }
+
+    function stopTurn() {
+      if (!busy) return;
+      post({ type: "cancel" });
+      if (typeof transcript.interrupt === "function") {
+        transcript.interrupt();
       }
+      // Optimistic: host will also send cancelled + turn end
+      setBusy(false);
     }
 
     function autoSize() {
@@ -333,6 +351,27 @@
       if (slash?.isOpen?.()) {
         return;
       }
+      // Enter while running + text → queue; empty Enter while running → stop
+      if (busy) {
+        const payload = collectPayload();
+        if (!payload.text && !payload.attachments.length) {
+          stopTurn();
+          return;
+        }
+        if (payload.text) {
+          promptHistory.push(payload.text);
+          if (promptHistory.length > 80) promptHistory.shift();
+        }
+        promptQueue.enqueue({
+          text: payload.text,
+          attachments: payload.attachments,
+          mentions: payload.mentions,
+          chipMeta: chipMetaFrom(payload),
+        });
+        clearComposer();
+        toast("Queued");
+        return;
+      }
       const payload = collectPayload();
       if (!payload.text && !payload.attachments.length) {
         return;
@@ -360,10 +399,6 @@
         chipMeta: chipMetaFrom(payload),
       };
       clearComposer();
-      if (busy) {
-        promptQueue.enqueue(entry);
-        return;
-      }
       dispatchPrompt(entry);
     }
 
@@ -419,7 +454,10 @@
     }
 
     function bind() {
-      els.send?.addEventListener("click", send);
+      els.send?.addEventListener("click", () => {
+        if (busy) stopTurn();
+        else send();
+      });
       els.btnNewChat?.addEventListener("click", onPrimaryNavClick);
       els.input?.addEventListener("input", autoSize);
       els.input?.addEventListener("scroll", () => {

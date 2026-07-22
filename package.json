@@ -2,7 +2,7 @@
   "name": "warp",
   "displayName": "Warp â€” Grok Sidebar Agent",
   "description": "Secondary-sidebar coding agent for VS Code & Cursor. Chat with Grok Build over ACP: tools, slash commands, model/effort, history, and OAuth.",
-  "version": "0.9.59",
+  "version": "0.9.83",
   "publisher": "WarpteLabs",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -45,7 +45,9 @@
     "onCommand:warp.open",
     "onCommand:warp.signIn",
     "onCommand:warp.signOut",
-    "onCommand:warp.restartAgent"
+    "onCommand:warp.restartAgent",
+    "onCommand:warp.debugExpireTrial",
+    "onCommand:warp.debugResetTrial"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -87,6 +89,16 @@
       {
         "command": "warp.restartAgent",
         "title": "Restart Agent",
+        "category": "Warp"
+      },
+      {
+        "command": "warp.debugExpireTrial",
+        "title": "Debug: Expire free trial (test lock)",
+        "category": "Warp"
+      },
+      {
+        "command": "warp.debugResetTrial",
+        "title": "Debug: Reset free trial",
         "category": "Warp"
       }
     ],
@@ -166,6 +178,12 @@
           "default": false,
           "description": "UI-only mock replies without spawning the agent (for development)."
         },
+        "warp.subagentsEnabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Allow Grok multi-agent (subagents / task tool). Sets `GROK_SUBAGENTS=1` on the agent process. Restart the agent after changing. Spec: grokinfoxai Subagents."
+        },
+
         "warp.billingApiBase": {
           "type": "string",
           "default": "https://warpte.com",
