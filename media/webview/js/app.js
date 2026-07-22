@@ -45,6 +45,36 @@
   /** set after composer mounts — Settings → Extensions uses this */
   let runSlashFn = function (/** @type {string} */ _cmd) {};
 
+  /**
+   * Top-left primary nav icon:
+   *   Settings / History open → chat bubble (back to current chat)
+   *   On chat view → plus (new conversation)
+   */
+  const ICON_PLUS =
+    '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M12 5v14M5 12h14"/></svg>';
+  const ICON_CHAT =
+    '<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path stroke="currentColor" stroke-width="1.5" d="M12 22c5.5228 0 10-4.4772 10-10 0-5.52285-4.4772-10-10-10C6.47715 2 2 6.47715 2 12c0 1.5997.37562 3.1116 1.04346 4.4525.17748.3563.23655.7636.13366 1.1481l-.59561 2.2261c-.25856.9663.6255 1.8503 1.59184 1.5918l2.22604-.5956c.38454-.1029.79182-.0438 1.14814.1336C8.88837 21.6244 10.4003 22 12 22Z"/></svg>';
+
+  function syncPrimaryNavBtn() {
+    const btn = els.btnNewChat;
+    const root = els.root;
+    if (!btn || !root) return;
+    const overlay =
+      root.classList.contains("settings-open") ||
+      root.classList.contains("history-open");
+    if (overlay) {
+      btn.innerHTML = ICON_CHAT;
+      btn.title = "Back to chat";
+      btn.setAttribute("aria-label", "Back to chat");
+      btn.dataset.mode = "back";
+    } else {
+      btn.innerHTML = ICON_PLUS;
+      btn.title = "New conversation";
+      btn.setAttribute("aria-label", "New conversation");
+      btn.dataset.mode = "new";
+    }
+  }
+
   const historyUi = W.history.mount({
     root: els.root,
     panel: els.historyPanel,
@@ -58,6 +88,7 @@
     post,
     onOpenChange(open) {
       if (open) settingsUi.setOpen(false);
+      syncPrimaryNavBtn();
     },
   });
 
@@ -73,6 +104,7 @@
           post,
           onOpenChange(open) {
             if (open) historyUi.setOpen(false);
+            syncPrimaryNavBtn();
           },
           onRunSlash(cmd) {
             runSlashFn(cmd);
@@ -87,6 +119,8 @@
           },
         })
       : settingsUi;
+
+  syncPrimaryNavBtn();
 
   const attach = W.attach.mount({
     tray: els.tray,
@@ -168,6 +202,7 @@
     modelSelector,
     promptQueue,
     historyUi,
+    settingsUi,
     mentionedPaths,
     showToast,
     onNewChat(info) {
@@ -253,31 +288,47 @@
     return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
   };
 
+  /**
+   * Footer context line.
+   * Grok compact = session/prompt with "/compact" (see acpClient.compact).
+   * Stats are display-only; only the "Compact" control starts compaction.
+   */
   function applyContext(msg) {
     if (!els.ctxUsage) return;
     const used = Number(msg.usedTokens) || 0;
     const total = Number(msg.totalTokens) || 0;
     if (!total) {
-      els.ctxUsage.textContent = "—";
+      els.ctxUsage.innerHTML = '<span class="ctx-seg">—</span>';
       els.ctxUsage.title = "Context window";
       els.ctxUsage.classList.remove("warn", "hot");
       return;
     }
     const pct = Math.min(100, Math.round((used / total) * 100));
-    // No "ctx" prefix — just used / total · %
-    els.ctxUsage.textContent =
-      formatTok(used) + " / " + formatTok(total) + " · " + pct + "%";
+    // Every piece shares class "ctx-seg" (same font/color/spacing).
+    // Separators are their own segs so " · " matches on both sides of Compact.
+    // e.g. 120k / 500k · 24% · Compact
+    els.ctxUsage.innerHTML =
+      '<span class="ctx-seg">' +
+      formatTok(used) +
+      " / " +
+      formatTok(total) +
+      "</span>" +
+      '<span class="ctx-seg"> · </span>' +
+      '<span class="ctx-seg">' +
+      pct +
+      "%</span>" +
+      '<span class="ctx-seg"> · </span>' +
+      '<button type="button" class="ctx-seg" data-ctx-compact title="Compress conversation (/compact)">Compact</button>';
     els.ctxUsage.title =
-      "Context window: " +
+      "Context: " +
       used.toLocaleString() +
-      " used of " +
+      " / " +
       total.toLocaleString() +
       " tokens (" +
       pct +
-      "%). Click: compact · Shift+click: /context";
+      "%)";
     els.ctxUsage.classList.toggle("warn", pct >= 70 && pct < 90);
     els.ctxUsage.classList.toggle("hot", pct >= 90);
-    els.ctxUsage.style.cursor = "pointer";
   }
 
   els.btnAuth?.addEventListener("click", () => {
@@ -288,12 +339,14 @@
     post({ type: "signIn" });
   });
 
+  // Compact only when the Compact segment is clicked (not token stats)
   els.ctxUsage?.addEventListener("click", (e) => {
-    if (e.shiftKey) {
-      // Run agent /context as a prompt
-      post({ type: "prompt", text: "/context", attachments: [], mentions: [] });
-      return;
-    }
+    const t = e.target;
+    if (!(t instanceof Element)) return;
+    const btn = t.closest("[data-ctx-compact]");
+    if (!btn || !els.ctxUsage.contains(btn)) return;
+    e.preventDefault();
+    e.stopPropagation();
     post({ type: "compact" });
   });
 

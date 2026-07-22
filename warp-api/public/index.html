@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Warp</title>
-  <meta name="description" content="Warp â€” Grok sidebar agent for VS Code &amp; Cursor" />
+  <meta name="description" content="Warp — Grok sidebar agent for VS Code &amp; Cursor" />
   <meta name="theme-color" content="#000000" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <link rel="canonical" href="https://warpte.com/" />
@@ -14,7 +14,7 @@
     body {
       min-height: 100vh;
       background: #000;
-      color: #e8e8e8;
+      color: #111;
       font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
       display: flex;
       align-items: stretch;
@@ -22,23 +22,23 @@
       padding: 16px;
     }
 
-    /* Dark grey shell over black page â€” 20px corners visible */
+    /* White paper shell ~90vw, 20px corners over black */
     .shell {
-      width: 100%;
-      max-width: 1100px;
+      width: 99vw;
+      max-width: none;
       margin: 0 auto;
       min-height: calc(100vh - 32px);
-      background: #161616;
+      background: #f4f4f2;
       border-radius: 20px;
       display: flex;
       flex-direction: column;
       overflow: hidden;
-      border: 1px solid #222;
+      border: 1px solid #e4e4e0;
     }
 
     .hdr-bar {
       flex-shrink: 0;
-      border-bottom: 1px solid #222;
+      border-bottom: 1px solid #e4e4e0;
     }
     .hdr {
       max-width: 980px;
@@ -55,7 +55,7 @@
       align-items: center;
       gap: 10px;
       text-decoration: none;
-      color: #e8e8e8;
+      color: #111;
       font-family: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
       font-size: 13px;
       font-weight: 700;
@@ -64,7 +64,7 @@
       width: 20px;
       height: 20px;
       display: block;
-      color: #c8c8c8;
+      color: #222;
     }
     .hdr-links {
       display: flex;
@@ -72,11 +72,11 @@
       gap: 20px;
     }
     .hdr-links a {
-      color: #888;
+      color: #666;
       text-decoration: none;
       font-size: 13px;
     }
-    .hdr-links a:hover { color: #e8e8e8; }
+    .hdr-links a:hover { color: #111; }
 
     .main {
       flex: 1;
@@ -99,11 +99,15 @@
     .hero-svg {
       width: min(600px, 92vw);
       height: auto;
-      aspect-ratio: 390 / 230;
+      aspect-ratio: 442 / 230;
       user-select: none;
-      overflow: hidden;
+      overflow: visible;
       pointer-events: auto;
       cursor: default;
+      color: #3a3a3a;
+    }
+    .hero-svg .w-tile {
+      fill: #6e6e6e;
     }
     .hero-svg .w-tile.core {
       opacity: 0;
@@ -112,6 +116,7 @@
       transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), fill 140ms ease;
     }
     .hero-svg .w-tile.particle {
+      fill: #6e6e6e;
       pointer-events: none;
       transition: transform 100ms ease-out;
     }
@@ -131,67 +136,60 @@
       position: relative;
     }
 
-    .cmd {
-      appearance: none;
-      border: 1px solid #2a2a2a;
-      border-radius: 8px;
-      background: #1c1c1c;
-      color: #b0b0b0;
-      font-family: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
-      font-size: 12.5px;
-      padding: 11px 14px;
-      max-width: min(560px, 88vw);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      cursor: copy;
-      user-select: all;
-      transition: background 0.12s ease, border-color 0.12s ease;
-    }
-    .cmd:hover {
-      background: #222;
-      border-color: #3a3a3a;
-      color: #d8d8d8;
-    }
-    .cmd:focus,
-    .cmd:focus-visible {
-      outline: none;
-    }
-
-    .btn {
+    .btn-ide {
       display: inline-flex;
+      flex-direction: row;
       align-items: center;
-      justify-content: center;
+      justify-content: flex-start;
+      gap: 8px;
       font-size: 13px;
-      font-weight: 600;
-      font-family: inherit;
+      font-weight: 550;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      letter-spacing: -0.01em;
       text-decoration: none;
-      color: #0a0a0a;
-      background: #e8e8e8;
-      border: none;
       border-radius: 8px;
-      padding: 11px 20px;
+      padding: 10px 16px;
       white-space: nowrap;
       cursor: pointer;
+      border: 1px solid #ddd;
+      background: #fff;
+      color: #111;
+      transition: background 0.12s ease, border-color 0.12s ease;
     }
-    .btn:hover { background: #fff; }
-
-    .tip {
-      position: fixed;
-      z-index: 50;
-      pointer-events: none;
-      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-      font-size: 12px;
-      font-weight: 600;
-      color: #9a9a9a;
-      background: transparent;
-      padding: 0;
-      min-height: 1em;
-      white-space: nowrap;
-      opacity: 0;
+    .btn-ide span {
+      text-align: left;
     }
-    .tip.show {
-      opacity: 1;
+    .btn-ide:hover {
+      background: #f0f0ec;
+      border-color: #ccc;
+    }
+    .btn-ide svg {
+      width: 18px;
+      height: 18px;
+      display: block;
+      flex-shrink: 0;
+    }
+    .btn-ide.cursor svg {
+      width: 15px;
+      height: 17px;
+    }
+    .btn-ide.vscode {
+      border-color: #0078d4;
+      background: #0078d4;
+      color: #fff;
+    }
+    .btn-ide.vscode:hover {
+      background: #0066b4;
+      border-color: #0066b4;
+    }
+    .btn-ide.cursor {
+      border-color: #1a1a1a;
+      background: #1a1a1a;
+      color: #fff;
+    }
+    .btn-ide.cursor:hover {
+      background: #333;
+      border-color: #333;
     }
   </style>
 </head>
@@ -219,124 +217,37 @@
     <main class="main">
       <div class="hero" id="hero" aria-label="Warp"></div>
       <div class="row">
-        <button
-          type="button"
-          class="cmd"
-          id="cmd"
-          title="Copy"
-        >code --install-extension warp-agent.warp</button>
-        <a class="btn" href="vscode:extension/warp-agent.warp">Install</a>
+        <a
+          class="btn-ide vscode"
+          href="vscode:extension/WarpteLabs.warp"
+          title="Download for VS Code"
+          aria-label="Download for VS Code"
+        >
+          <span>Download for</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path fill="currentColor" d="M.228341 8.36915s-.584553-.42591.11691-.99462L1.97956 5.89736s.46765-.49732.96208-.06402L18.0231 17.375v5.5344s-.0073.8691-1.1107.7731z"/>
+            <path fill="currentColor" d="M4.11555 11.9367.228273 15.5089s-.399445.3004 0 .8371l1.804807 1.6593s.42867.4653 1.06194-.064l4.12109-3.1586zM10.94 11.9661l7.1291-5.50248-.0463-5.50497s-.3045-1.201443-1.3201-.576102L7.21589 9.11025z"/>
+            <path fill="currentColor" d="M16.9121 23.69c.414.4283.9158.288.9158.288l5.5559-2.7672c.7113-.49.6114-1.0981.6114-1.0981V3.58803c0-.72628-.7356-.9774-.7356-.9774L18.4441.264377c-1.0522-.657345-1.7414.118171-1.7414.118171s.8865-.645032 1.3201.576102V22.8086c0 .1502-.0317.2979-.095.4308-.1267.2585-.4019.4998-1.062.3989z"/>
+          </svg>
+        </a>
+        <a
+          class="btn-ide cursor"
+          href="https://cursor.com/link/extension?id=warpte.warp"
+          title="Download for Cursor"
+          aria-label="Download for Cursor"
+        >
+          <span>Download for</span>
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 466.73 532.09" aria-hidden="true" fill="currentColor">
+            <path d="M457.43,125.94L244.42,2.96c-6.84-3.95-15.28-3.95-22.12,0L9.3,125.94c-5.75,3.32-9.3,9.46-9.3,16.11v247.99c0,6.65,3.55,12.79,9.3,16.11l213.01,122.98c6.84,3.95,15.28,3.95,22.12,0l213.01-122.98c5.75-3.32,9.3-9.46,9.3-16.11v-247.99c0-6.65-3.55-12.79-9.3-16.11h-.01ZM444.05,151.99l-205.63,356.16c-1.39,2.4-5.06,1.42-5.06-1.36v-233.21c0-4.66-2.49-8.97-6.53-11.31L24.87,145.67c-2.4-1.39-1.42-5.06,1.36-5.06h411.26c5.84,0,9.49,6.33,6.57,11.39h-.01Z"/>
+          </svg>
+        </a>
       </div>
     </main>
   </div>
-  <div class="tip" id="tip" role="status" aria-live="polite"></div>
 
   <script src="/hero.js"></script>
   <script>
     (function () {
-      var CMD = "code --install-extension warp-agent.warp";
-      var WORD = "Copied";
-      var cmdEl = document.getElementById("cmd");
-      var tip = document.getElementById("tip");
-      var tipTimer = null;
-      var typeIv = null;
-
-      var GREYS = ["#4a4a4a", "#5a5a5a", "#6a6a6a", "#787878", "#888888", "#9a9a9a", "#3e3e3e", "#707070"];
-      var ORANGES = ["#ff5a00", "#ff6b18", "#e85d12", "#ff7a33", "#f06020", "#d9550a", "#ff8a40", "#c94e08"];
-
-      function hash01(i) {
-        var x = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
-        return x - Math.floor(x);
-      }
-
-      /** Organic mix: mostly greys, some oranges â€” stable per tile index */
-      function toneFor(i, salt) {
-        var r = hash01(i * 3.17 + (salt || 0));
-        var r2 = hash01(i * 7.91 + 2.3);
-        if (r < 0.16) return ORANGES[Math.floor(r2 * ORANGES.length) % ORANGES.length];
-        if (r < 0.22) return ORANGES[Math.floor(r2 * ORANGES.length) % ORANGES.length];
-        return GREYS[Math.floor(r2 * GREYS.length) % GREYS.length];
-      }
-
-      function paintOrganic(hero) {
-        if (!hero) return;
-        var cores = hero.querySelectorAll(".w-tile.core");
-        cores.forEach(function (el, i) {
-          var c = toneFor(i, 1);
-          el.setAttribute("data-fill", c);
-          el.style.fill = c;
-        });
-        // Particles: recolor as stream creates them
-        var mo = new MutationObserver(function () {
-          hero.querySelectorAll(".w-tile.particle").forEach(function (el, i) {
-            if (el.getAttribute("data-toned")) return;
-            el.setAttribute("data-toned", "1");
-            el.style.fill = toneFor(i + 100, 4);
-          });
-        });
-        var layer = hero.querySelector(".particle-layer");
-        if (layer) mo.observe(layer, { childList: true });
-      }
-
-      function showTypewriter() {
-        if (!cmdEl || !tip) return;
-        var r = cmdEl.getBoundingClientRect();
-        tip.textContent = "";
-        tip.style.left = r.left + r.width / 2 + "px";
-        tip.style.top = r.top - 28 + "px";
-        tip.style.transform = "translateX(-50%)";
-        tip.classList.add("show");
-        if (tipTimer) clearTimeout(tipTimer);
-        if (typeIv) clearInterval(typeIv);
-        var i = 0;
-        typeIv = setInterval(function () {
-          i += 1;
-          tip.textContent = WORD.slice(0, i);
-          if (i >= WORD.length) {
-            clearInterval(typeIv);
-            typeIv = null;
-            tipTimer = setTimeout(function () {
-              tip.classList.remove("show");
-              tip.textContent = "";
-            }, 900);
-          }
-        }, 45);
-      }
-
-      function copyCmd() {
-        function done(ok) {
-          if (ok) showTypewriter();
-        }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(CMD).then(function () {
-            done(true);
-          }).catch(function () {
-            fallback(done);
-          });
-        } else {
-          fallback(done);
-        }
-      }
-
-      function fallback(done) {
-        try {
-          var ta = document.createElement("textarea");
-          ta.value = CMD;
-          ta.setAttribute("readonly", "");
-          ta.style.cssText = "position:fixed;left:-9999px";
-          document.body.appendChild(ta);
-          ta.select();
-          done(!!document.execCommand("copy"));
-          document.body.removeChild(ta);
-        } catch (e) {
-          done(false);
-        }
-      }
-
-      if (cmdEl) {
-        cmdEl.addEventListener("click", copyCmd);
-      }
-
       fetch("/tiles.json")
         .then(function (r) { return r.json(); })
         .then(function (tiles) {
@@ -344,10 +255,7 @@
           var H = window.Warp && window.Warp.hero;
           if (!hero || !H) return;
           H.mount(hero, tiles);
-          paintOrganic(hero);
           H.setEmpty(hero, true, tiles, { played: false, forceReplay: false });
-          // re-apply after spiral starts (opacity anim) â€” fills stay via style
-          setTimeout(function () { paintOrganic(hero); }, 50);
         })
         .catch(function () {});
     })();

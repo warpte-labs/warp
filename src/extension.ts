@@ -7,6 +7,7 @@ import {
   registerCommands,
   maybeWelcome,
 } from "./commands";
+import { initLicense, getLicenseStatusLocal } from "./license";
 
 let output: vscode.OutputChannel | undefined;
 
@@ -16,6 +17,10 @@ export function activate(context: vscode.ExtensionContext) {
     output?.appendLine(`[${new Date().toISOString()}] ${msg}`);
   };
   log("activate() starting");
+
+  initLicense(context);
+  const plan = getLicenseStatusLocal();
+  log(`license: ${plan.kind} — ${plan.detail}`);
 
   const agent = new AgentProcess();
   const provider = new WarpViewProvider(

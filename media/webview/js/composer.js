@@ -17,6 +17,7 @@
    *   modelSelector?: object,
    *   promptQueue: object,
    *   historyUi: object,
+   *   settingsUi?: { setOpen?: (o: boolean) => void },
    *   mentionedPaths: Set<string>,
    *   showToast?: (text: string) => void,
    *   onNewChat?: () => void,
@@ -33,6 +34,7 @@
       modelSelector,
       promptQueue,
       historyUi,
+      settingsUi,
       mentionedPaths,
       showToast,
       onNewChat,
@@ -77,6 +79,56 @@
       els.input.style.height = "auto";
       els.input.style.height =
         Math.min(els.input.scrollHeight, 120) + "px";
+      syncInputHighlight();
+    }
+
+    function escHl(s) {
+      return String(s || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    /**
+     * Mirror textarea into #input-hl; paint known /command tokens orange.
+     */
+    function syncInputHighlight() {
+      const ta = els.input;
+      const hl = els.inputHl;
+      if (!ta || !hl) return;
+      const val = ta.value || "";
+      if (!val) {
+        hl.innerHTML = "";
+        return;
+      }
+      const known =
+        slash && typeof slash.knownNames === "function"
+          ? slash.knownNames()
+          : new Set();
+      // Orange for known /cmd (and aliases) at line start or after whitespace
+      let html = "";
+      let i = 0;
+      const re = /(^|[\s])(\/[A-Za-z0-9_.:-]+)/g;
+      let m;
+      while ((m = re.exec(val))) {
+        const pre = m[1] || "";
+        const token = m[2];
+        const name = token.slice(1).toLowerCase();
+        const start = m.index;
+        html += escHl(val.slice(i, start));
+        html += escHl(pre);
+        if (known.has(name)) {
+          html += '<span class="input-slash">' + escHl(token) + "</span>";
+        } else {
+          html += escHl(token);
+        }
+        i = start + pre.length + token.length;
+      }
+      html += escHl(val.slice(i));
+      if (val.endsWith("\n")) html += "\n";
+      hl.innerHTML = html;
+      hl.scrollTop = ta.scrollTop;
+      hl.scrollLeft = ta.scrollLeft;
     }
 
     function clearComposer() {
@@ -315,8 +367,36 @@
       dispatchPrompt(entry);
     }
 
+    function isOverlayOpen() {
+      const root = els.root;
+      if (!root || !root.classList) return false;
+      return (
+        root.classList.contains("settings-open") ||
+        root.classList.contains("history-open")
+      );
+    }
+
+    /** Settings/History → back to chat only. Chat view → new conversation. */
+    function onPrimaryNavClick() {
+      if (isOverlayOpen()) {
+        historyUi?.setOpen?.(false);
+        settingsUi?.setOpen?.(false);
+        if (els.input) {
+          try {
+            els.input.focus();
+          } catch (e) {
+            /* ignore */
+          }
+        }
+        return;
+      }
+      startNewChat();
+    }
+
     function startNewChat() {
-      historyUi.setOpen(false);
+      // Leave history / settings so the empty chat is visible
+      historyUi?.setOpen?.(false);
+      settingsUi?.setOpen?.(false);
       mention.close();
       slash?.close?.();
       promptQueue.clear();
@@ -330,6 +410,7 @@
         autoSize();
         els.input.focus();
       }
+      syncInputHighlight();
       // Spiral W intro: setEmpty handles empty-after-content; if already empty, force replay
       if (typeof onNewChat === "function") {
         onNewChat({ wasEmpty: !!wasEmpty });
@@ -339,8 +420,14 @@
 
     function bind() {
       els.send?.addEventListener("click", send);
-      els.btnNewChat?.addEventListener("click", startNewChat);
+      els.btnNewChat?.addEventListener("click", onPrimaryNavClick);
       els.input?.addEventListener("input", autoSize);
+      els.input?.addEventListener("scroll", () => {
+        if (els.inputHl && els.input) {
+          els.inputHl.scrollTop = els.input.scrollTop;
+          els.inputHl.scrollLeft = els.input.scrollLeft;
+        }
+      });
       els.input?.addEventListener("keydown", (e) => {
         // Slash / mention menus own arrows & enter
         if (slash?.isOpen?.() || mention?.isOpen?.()) {
@@ -362,6 +449,7 @@
             promptHistory.length &&
             (empty || histIdx >= 0 || (e.key === "ArrowUp" && atStart))
           ) {
+            // history branch continues below; highlight refreshed via input/autoSize
             e.preventDefault();
             if (histIdx < 0) {
               histDraft = val;
@@ -400,7 +488,11 @@
       });
       els.btnImage?.addEventListener("click", () => attach.pickImage());
       els.btnPlus?.addEventListener("click", () => attach.pickAny());
-      els.btnAt?.addEventListener("click", () => mention.openPicker(""));
+      els.btnAt?.addEventListener("click", () => {
+        mention.openPicker("");
+        // Mirror highlight (textarea glyphs are transparent via #input-hl)
+        autoSize();
+      });
       els.btnSlash?.addEventListener("click", () => {
         if (!els.input) return;
         if (slash && typeof slash.openMenu === "function") {
@@ -408,6 +500,7 @@
         } else {
           els.input.value += "/";
           els.input.focus();
+          els.input.dispatchEvent(new Event("input", { bubbles: true }));
         }
         autoSize();
       });

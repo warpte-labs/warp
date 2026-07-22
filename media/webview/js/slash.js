@@ -6,8 +6,13 @@
 
   const W = (global.Warp = global.Warp || {});
 
-  /** Host/pager commands Warp handles itself (not only via agent prompt). */
+  /**
+   * Static slash menu: Warp host handlers + high-value agent prompts only.
+   * Extra Grok/ACP commands still appear when the binary sends available_commands.
+   * Dropped from menu (TUI-centric): goal, loop, plugins, reload-plugins.
+   */
   const HOST_COMMANDS = [
+    // ── Warp host (handled in composer.tryHostCommand) ──
     {
       name: "new",
       description: "Start a new conversation",
@@ -27,7 +32,7 @@
     },
     {
       name: "history",
-      description: "Recall recent prompts in this chat",
+      description: "Recall recent prompts in this chat (↑/↓)",
       source: "warp",
     },
     {
@@ -59,6 +64,7 @@
       description: "Toggle always-approve (YOLO) tool permissions",
       inputHint: "on | off",
       source: "warp",
+      aliases: ["yolo"],
     },
     {
       name: "auto",
@@ -71,33 +77,11 @@
       source: "warp",
     },
     {
-      name: "context",
-      description: "Show context window usage (agent)",
-      source: "agent",
-    },
-    {
-      name: "session-info",
-      description: "Show session details (agent)",
-      source: "agent",
-    },
-    {
       name: "rename",
       description: "Rename the current session",
       inputHint: "new title",
       source: "warp",
       aliases: ["title"],
-    },
-    {
-      name: "plan",
-      description: "Enter plan mode (agent)",
-      inputHint: "optional description",
-      source: "agent",
-    },
-    {
-      name: "view-plan",
-      description: "View the current plan (agent)",
-      source: "agent",
-      aliases: ["show-plan", "plan-view"],
     },
     {
       name: "login",
@@ -115,38 +99,38 @@
       source: "warp",
       aliases: ["ml"],
     },
+    // ── High-value agent prompts (sent as /cmd to Grok) ──
+    {
+      name: "context",
+      description: "Show context window usage",
+      source: "agent",
+    },
+    {
+      name: "session-info",
+      description: "Show session details",
+      source: "agent",
+    },
+    {
+      name: "plan",
+      description: "Enter plan mode",
+      inputHint: "optional description",
+      source: "agent",
+    },
+    {
+      name: "view-plan",
+      description: "View the current plan",
+      source: "agent",
+      aliases: ["show-plan", "plan-view"],
+    },
     {
       name: "feedback",
-      description: "Send feedback about the session (agent)",
+      description: "Send feedback about the session",
       inputHint: "message",
       source: "agent",
     },
     {
-      name: "goal",
-      description: "Set or manage an autonomous goal (agent)",
-      inputHint: "<objective> | status | pause | resume | clear",
-      source: "agent",
-    },
-    {
-      name: "loop",
-      description: "Run a prompt on a recurring interval (agent)",
-      inputHint: "[interval] <prompt>",
-      source: "agent",
-    },
-    {
-      name: "plugins",
-      description: "Manage plugins (agent)",
-      inputHint: "list | reload | …",
-      source: "agent",
-    },
-    {
-      name: "reload-plugins",
-      description: "Reload plugins from disk (agent)",
-      source: "agent",
-    },
-    {
       name: "help",
-      description: "Grok docs help skill (agent)",
+      description: "Grok docs help",
       source: "agent",
     },
   ];
@@ -400,6 +384,8 @@
       setOpen(true);
       refreshFromQuery();
       ta.focus();
+      // Fire input so composer highlight mirror redraws (textarea text is transparent)
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
     function setCommands(list) {
@@ -422,12 +408,28 @@
     opts.input.addEventListener("input", onInput);
     opts.input.addEventListener("keydown", onKeydown, true);
 
+    /** Lowercase command names + aliases (for input orange highlight). */
+    function knownNames() {
+      const set = new Set();
+      for (const c of allCommands()) {
+        if (c.name) set.add(String(c.name).toLowerCase());
+        const aliases = c.aliases;
+        if (Array.isArray(aliases)) {
+          for (const a of aliases) {
+            if (a) set.add(String(a).toLowerCase());
+          }
+        }
+      }
+      return set;
+    }
+
     return {
       openMenu,
       setCommands,
       close: () => setOpen(false),
       isOpen: () => open,
       hostCommands: HOST_COMMANDS,
+      knownNames,
     };
   }
 

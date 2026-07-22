@@ -22,10 +22,13 @@
    * }} opts
    */
   function mount(opts) {
+    const PAGE = 20;
     const state = {
       open: false,
       viewingId: null,
       loading: false,
+      allSessions: /** @type {Array} */ ([]),
+      shown: 0,
     };
 
     function setOpen(open) {
@@ -60,6 +63,8 @@
 
     function requestList() {
       state.loading = true;
+      state.allSessions = [];
+      state.shown = 0;
       opts.list.innerHTML =
         '<div class="history-loading">Loading local sessions…</div>';
       opts.post({ type: "listHistory" });
@@ -73,42 +78,79 @@
       opts.post({ type: "getHistory", sessionId: id });
     }
 
+    function createItem(s) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "hist-item compact";
+      btn.dataset.id = s.id;
+
+      const title = document.createElement("div");
+      title.className = "ht";
+      title.textContent = s.title || "Untitled chat";
+
+      const meta = document.createElement("div");
+      meta.className = "hm";
+      const when = document.createElement("span");
+      when.textContent = formatWhen(s.updatedAt);
+      meta.appendChild(when);
+
+      btn.appendChild(title);
+      btn.appendChild(meta);
+      btn.addEventListener("click", () => requestDetail(s.id));
+      return btn;
+    }
+
+    /** Append next page of session rows (no chrome). */
+    function appendMore() {
+      if (state.shown >= state.allSessions.length) {
+        return;
+      }
+      const end = Math.min(state.shown + PAGE, state.allSessions.length);
+      const frag = document.createDocumentFragment();
+      for (let i = state.shown; i < end; i++) {
+        frag.appendChild(createItem(state.allSessions[i]));
+      }
+      opts.list.appendChild(frag);
+      state.shown = end;
+
+      // If the first page(s) don't fill the scroll area, keep filling
+      // so the user can still scroll into more items.
+      if (
+        state.shown < state.allSessions.length &&
+        opts.list.scrollHeight <= opts.list.clientHeight + 4
+      ) {
+        requestAnimationFrame(appendMore);
+      }
+    }
+
     /**
      * @param {Array} sessions
      */
     function renderList(sessions) {
       state.loading = false;
-      const items = Array.isArray(sessions) ? sessions : [];
-      if (!items.length) {
+      state.allSessions = Array.isArray(sessions) ? sessions : [];
+      state.shown = 0;
+      opts.list.innerHTML = "";
+      if (!state.allSessions.length) {
         opts.list.innerHTML =
           '<div class="history-empty">No local chats yet.<br/>Send a message to create one — history is stored by Grok on this machine.</div>';
         return;
       }
-
-      opts.list.innerHTML = "";
-      for (const s of items) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "hist-item compact";
-        btn.dataset.id = s.id;
-
-        const title = document.createElement("div");
-        title.className = "ht";
-        title.textContent = s.title || "Untitled chat";
-
-        const meta = document.createElement("div");
-        meta.className = "hm";
-        const when = document.createElement("span");
-        when.textContent = formatWhen(s.updatedAt);
-        meta.appendChild(when);
-
-        btn.appendChild(title);
-        btn.appendChild(meta);
-
-        btn.addEventListener("click", () => requestDetail(s.id));
-        opts.list.appendChild(btn);
-      }
+      appendMore();
     }
+
+    opts.list.addEventListener("scroll", () => {
+      if (state.loading || state.viewingId) {
+        return;
+      }
+      if (state.shown >= state.allSessions.length) {
+        return;
+      }
+      const el = opts.list;
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 80) {
+        appendMore();
+      }
+    });
 
     /**
      * @param {{ session?: object|null, messages?: Array }} payload

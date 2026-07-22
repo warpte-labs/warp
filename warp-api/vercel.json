@@ -4,7 +4,10 @@
   "trailingSlash": false,
   "rewrites": [
     { "source": "/", "destination": "/index.html" },
-    { "source": "/contact", "destination": "/contact.html" }
+    { "source": "/contact", "destination": "/contact.html" },
+    { "source": "/billing/success", "destination": "/billing/success.html" },
+    { "source": "/billing/cancel", "destination": "/billing/cancel.html" },
+    { "source": "/billing/portal-return", "destination": "/billing/success.html" }
   ],
   "headers": [
     {

@@ -2,9 +2,9 @@
  * Local usage snapshot from ~/.grok/sessions + real tokens from unified.jsonl.
  * Chart series = real tokens (prompt + completion) from shell.turn.inference_done.
  *
- * Fast path: token log is cached; sessions use summary-only counts (no previews).
+ * Fast path: token log is cached; sessions use summary-only (no previews).
  */
-import { summarizeLocalSessions } from "./sessionHistory";
+import { listSessionsLite } from "./sessionHistory";
 import { getAuthStatus } from "./auth";
 import {
   readBillingCreditsFromLog,
@@ -15,9 +15,7 @@ import { readTokenUsageFromLog, type TokenTotals } from "./tokenUsage";
 export type UsageRange = "7d" | "30d" | "90d" | "12m" | "all";
 
 export type UsageDayRow = {
-  /** YYYY-MM-DD local */
   day: string;
-  /** Short label e.g. "22 Jul" */
   label: string;
   tokens: number;
   promptTokens: number;
@@ -26,10 +24,20 @@ export type UsageDayRow = {
   turns: number;
 };
 
+/** Dense table row for Usage → Sessions */
+export type UsageSessionRow = {
+  id: string;
+  title: string;
+  tokens: number;
+  turns: number;
+  /** Short when label e.g. "Today", "21 Jul" */
+  when: string;
+  updatedAt: string;
+};
+
 export type UsageSeries = {
   range: UsageRange;
   labels: string[];
-  /** Real total tokens (prompt + completion) per bucket */
   values: number[];
   unit: "tokens";
 };
@@ -51,8 +59,9 @@ export type UsageSnapshot = {
     inferenceTurns: number;
   };
   series: UsageSeries;
-  /** Daily breakdown for the selected range (newest first) */
   daily: UsageDayRow[];
+  /** Top sessions by tokens (dense table) */
+  sessions: UsageSessionRow[];
   credits: BillingCredits | null;
   note: string;
 };
@@ -66,20 +75,23 @@ const RANGE_DAYS: Record<UsageRange, number> = {
 };
 
 export function getUsageSnapshot(
-  _limit = 80,
+  limit = 40,
   range: UsageRange = "30d"
 ): UsageSnapshot {
   const auth = getAuthStatus();
-  // Parallel-ish: tokens first (often cached), then cheap session counts + credits
   const tokenIndex = readTokenUsageFromLog();
-  const sessionSum = summarizeLocalSessions();
+  const sessionSum = listSessionsLite(Math.max(limit, 80));
   const credits = readBillingCreditsFromLog();
 
   const series = buildTokenSeries(tokenIndex.byDay, range);
   const daily = buildDailyRows(tokenIndex.byDay, range);
+  const sessions = buildSessionRows(
+    sessionSum.items,
+    tokenIndex.bySession,
+    limit
+  );
   const tt = tokenIndex.totals;
 
-  // Range-scoped totals for the chart period (headline uses range tokens)
   const rangeTokens = daily.reduce((a, d) => a + d.tokens, 0);
   const rangeTurns = daily.reduce((a, d) => a + d.turns, 0);
   const rangePrompt = daily.reduce((a, d) => a + d.promptTokens, 0);
@@ -95,7 +107,6 @@ export function getUsageSnapshot(
       toolCalls: 0,
       contextTokensPeak: 0,
       models: [],
-      // Prefer range-scoped token totals so stats match the chart period
       tokens: rangeTokens || tt.totalTokens,
       promptTokens: rangePrompt || tt.promptTokens,
       completionTokens: rangeCompletion || tt.completionTokens,
@@ -105,6 +116,7 @@ export function getUsageSnapshot(
     },
     series,
     daily,
+    sessions,
     credits,
     note: tokenIndex.available
       ? ""
@@ -118,6 +130,65 @@ export function parseUsageRange(raw: unknown): UsageRange {
     return s;
   }
   return "30d";
+}
+
+function buildSessionRows(
+  items: { id: string; title: string; updatedAt: string }[],
+  bySession: Map<string, TokenTotals>,
+  limit: number
+): UsageSessionRow[] {
+  const rows: UsageSessionRow[] = [];
+  const seen = new Set<string>();
+
+  // Prefer sessions that have real token data
+  for (const [sid, tok] of bySession) {
+    if (!tok.totalTokens && !tok.turns) continue;
+    const meta = items.find((i) => i.id === sid);
+    rows.push({
+      id: sid,
+      title: meta?.title || `Chat ${sid.slice(0, 8)}`,
+      tokens: tok.totalTokens,
+      turns: tok.turns,
+      when: formatWhen(meta?.updatedAt || ""),
+      updatedAt: meta?.updatedAt || "",
+    });
+    seen.add(sid);
+  }
+
+  // Fill with recent sessions that have no token log yet
+  for (const s of items) {
+    if (seen.has(s.id)) continue;
+    rows.push({
+      id: s.id,
+      title: s.title,
+      tokens: 0,
+      turns: 0,
+      when: formatWhen(s.updatedAt),
+      updatedAt: s.updatedAt,
+    });
+  }
+
+  rows.sort((a, b) => {
+    if (b.tokens !== a.tokens) return b.tokens - a.tokens;
+    return Date.parse(b.updatedAt) - Date.parse(a.updatedAt);
+  });
+  return rows.slice(0, Math.max(1, limit));
+}
+
+function formatWhen(iso: string): string {
+  if (!iso) return "—";
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "—";
+  const d = new Date(t);
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const startThat = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.round(
+    (startToday.getTime() - startThat.getTime()) / 86400000
+  );
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Yesterday";
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
 function rangeStartEnd(range: UsageRange): { start: Date; end: Date } {
@@ -157,7 +228,6 @@ function buildDailyRows(
       turns: tok.turns,
     });
   }
-  // Newest first
   rows.sort((a, b) => (a.day < b.day ? 1 : a.day > b.day ? -1 : 0));
   return rows;
 }
@@ -168,9 +238,6 @@ function formatDayLabel(key: string): string {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
 }
 
-/**
- * Bucket real tokens from inference_done by day / week / month.
- */
 function buildTokenSeries(
   byDay: Map<string, TokenTotals>,
   range: UsageRange

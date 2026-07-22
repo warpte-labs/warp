@@ -1,4 +1,8 @@
-/** Extract plain text from ACP content blocks (nested-safe). */
+/**
+ * Extract plain text from ACP content blocks.
+ * Matches Grok/ACP shapes: string, { text }, { content: [...] }, arrays, deltas.
+ * @see https://agentclientprotocol.com + Grok agent-mode docs (agent_*_chunk)
+ */
 
 export function textFromContent(content: unknown): string {
   if (content == null) {
@@ -7,24 +11,28 @@ export function textFromContent(content: unknown): string {
   if (typeof content === "string") {
     return content;
   }
+  if (Array.isArray(content)) {
+    return content.map((part) => textFromContent(part)).join("");
+  }
   if (typeof content !== "object") {
     return "";
   }
-  const c = content as {
-    type?: string;
-    text?: string;
-    content?: unknown;
-  };
-  if (typeof c.text === "string" && c.text.length > 0) {
+  const c = content as Record<string, unknown>;
+  // Grok sample: update.content?.text
+  if (typeof c.text === "string") {
     return c.text;
   }
-  if (Array.isArray(c.content)) {
-    return (c.content as unknown[])
-      .map((part) => textFromContent(part))
-      .join("");
+  if (typeof c.delta === "string") {
+    return c.delta;
   }
-  if (c.content && typeof c.content === "object") {
+  if (typeof c.text_delta === "string") {
+    return c.text_delta;
+  }
+  if (c.content != null) {
     return textFromContent(c.content);
+  }
+  if (c.parts != null) {
+    return textFromContent(c.parts);
   }
   return "";
 }

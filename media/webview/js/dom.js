@@ -14,6 +14,7 @@
     return {
       messages: qs("messages"),
       input: qs("input"),
+      inputHl: qs("input-hl"),
       send: qs("send"),
       meta: qs("meta"),
       hero: qs("hero"),

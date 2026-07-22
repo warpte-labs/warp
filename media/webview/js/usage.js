@@ -10,6 +10,8 @@
   const RANGES = ["7d", "30d", "90d", "12m", "all"];
   const LABELS = { "7d": "7D", "30d": "30D", "90d": "90D", "12m": "12M", all: "All" };
 
+  const SESS_PAGE_SIZE = 20;
+
   /** @type {any} */
   let chart = null;
   /** @type {string} */
@@ -20,6 +22,8 @@
   let hostEl = null;
   /** @type {{ onRefresh?: () => void, onRange?: (r: string) => void }|null} */
   let hooks = null;
+  /** 0-based page index for sessions table */
+  let sessPage = 0;
 
   function loadingHtml() {
     return '<div class="usage-loading">Loading usage…</div>';
@@ -37,6 +41,7 @@
     if (lastData.series && lastData.series.range) {
       activeRange = String(lastData.series.range);
     }
+    sessPage = 0;
     paint();
   }
 
@@ -59,9 +64,6 @@
     html +=
       '<div class="fc-dash-chart-wrap"><div class="chart-el" id="usage-chart"></div></div>';
     html += "</div>";
-
-    // Daily breakdown (under chart)
-    html += dailyListHtml(data.daily || []);
 
     // Single bar + % (Grok billing log)
     const cr = data.credits;
@@ -95,6 +97,10 @@
     html += stat("Sessions", fmt(t.sessions || 0));
     html += stat("Messages", fmt(t.messages || 0));
     html += "</div>";
+
+    // Dense session table (V6) — reuses section label + stat-k/v tones
+    html += sessionsTableHtml(data.sessions || []);
+
     html +=
       '<button type="button" class="set-sv usage-refresh" data-action="refreshUsage">Refresh</button>';
     html += "</div>";
@@ -138,6 +144,7 @@
         }
       });
     }
+    wireSessPager();
     const container = hostEl.querySelector("#usage-ts-tabs");
     if (!container) return;
     container.querySelectorAll(".commerce-ts-tab").forEach(function (tab) {
@@ -155,6 +162,35 @@
         }
       });
     });
+  }
+
+  function wireSessPager() {
+    if (!hostEl) return;
+    hostEl.querySelectorAll("[data-sess-page]").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.preventDefault();
+        const p = Number(btn.getAttribute("data-sess-page"));
+        if (!Number.isFinite(p) || p < 0 || p === sessPage) return;
+        sessPage = p;
+        repaintSessionsOnly();
+      });
+    });
+  }
+
+  /** Update sessions table without remounting the chart. */
+  function repaintSessionsOnly() {
+    if (!hostEl) return;
+    const wrap = hostEl.querySelector(".usage-sess");
+    if (!wrap) {
+      paint();
+      return;
+    }
+    const tmp = document.createElement("div");
+    tmp.innerHTML = sessionsTableHtml((lastData && lastData.sessions) || []);
+    const next = tmp.firstElementChild;
+    if (!next) return;
+    wrap.replaceWith(next);
+    wireSessPager();
   }
 
   function positionPill() {
@@ -285,62 +321,6 @@
   /**
    * e.g. "36% left this week · Resets on 24 Jul"
    */
-  /**
-   * Daily token rows under the chart (newest first).
-   * @param {Array<{day?:string,label?:string,tokens?:number,promptTokens?:number,completionTokens?:number,turns?:number}>} rows
-   */
-  function dailyListHtml(rows) {
-    if (!rows || !rows.length) {
-      return (
-        '<div class="usage-daily">' +
-        '<div class="usage-daily-hd">Daily</div>' +
-        '<div class="usage-daily-empty">No token events in this range</div>' +
-        "</div>"
-      );
-    }
-    const maxTok = Math.max.apply(
-      null,
-      rows.map(function (r) {
-        return Number(r.tokens) || 0;
-      }).concat([1])
-    );
-    let body = "";
-    for (let i = 0; i < rows.length; i++) {
-      const r = rows[i];
-      const tok = Number(r.tokens) || 0;
-      const turns = Number(r.turns) || 0;
-      const prompt = Number(r.promptTokens) || 0;
-      const completion = Number(r.completionTokens) || 0;
-      const pct = Math.max(2, Math.round((tok / maxTok) * 100));
-      const label = r.label || r.day || "—";
-      body += '<div class="usage-day">';
-      body += '<div class="usage-day-top">';
-      body += '<span class="usage-day-date">' + esc(label) + "</span>";
-      body +=
-        '<span class="usage-day-tok">' + esc(fmt(tok)) + " tokens</span>";
-      body += "</div>";
-      body +=
-        '<div class="usage-day-bar"><i style="width:' + pct + '%"></i></div>';
-      body +=
-        '<div class="usage-day-sub">' +
-        esc(fmt(prompt)) +
-        " in · " +
-        esc(fmt(completion)) +
-        " out · " +
-        esc(String(turns)) +
-        " turn" +
-        (turns === 1 ? "" : "s") +
-        "</div>";
-      body += "</div>";
-    }
-    return (
-      '<div class="usage-daily">' +
-      '<div class="usage-daily-hd">Daily</div>' +
-      body +
-      "</div>"
-    );
-  }
-
   function creditMeta(cr) {
     const pct = Math.min(
       100,
@@ -399,6 +379,123 @@
       esc(label) +
       "</div></div>"
     );
+  }
+
+  /**
+   * Dense table: Session · Tokens · Turns · When (20 / page + centered numbers).
+   * @param {Array<{title?:string,tokens?:number,turns?:number,when?:string}>} rows
+   */
+  function sessionsTableHtml(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    let html = '<div class="usage-sess">';
+    html += '<div class="fc-section-label usage-sess-label">Sessions</div>';
+    if (!list.length) {
+      html +=
+        '<div class="usage-empty" style="padding:16px 0">No sessions yet</div>';
+      html += "</div>";
+      return html;
+    }
+
+    const pageCount = Math.max(1, Math.ceil(list.length / SESS_PAGE_SIZE));
+    if (sessPage >= pageCount) sessPage = pageCount - 1;
+    if (sessPage < 0) sessPage = 0;
+    const start = sessPage * SESS_PAGE_SIZE;
+    const slice = list.slice(start, start + SESS_PAGE_SIZE);
+
+    html += '<div class="usage-sess-head">';
+    html += '<span class="usage-stat-k">Session</span>';
+    html += '<span class="usage-stat-k">Tokens</span>';
+    html += '<span class="usage-stat-k">Turns</span>';
+    html += '<span class="usage-stat-k">When</span>';
+    html += "</div>";
+    for (let i = 0; i < slice.length; i++) {
+      const r = slice[i];
+      const tok = Number(r.tokens) || 0;
+      const turns = Number(r.turns) || 0;
+      html += '<div class="usage-sess-row">';
+      html +=
+        '<span class="usage-sess-t" title="' +
+        esc(r.title || "") +
+        '">' +
+        esc(r.title || "—") +
+        "</span>";
+      html +=
+        '<span class="usage-sess-tok">' +
+        (tok ? esc(fmt(tok)) : "—") +
+        "</span>";
+      html +=
+        '<span class="usage-sess-num">' +
+        (turns ? esc(fmt(turns)) : "—") +
+        "</span>";
+      html +=
+        '<span class="usage-sess-num">' + esc(r.when || "—") + "</span>";
+      html += "</div>";
+    }
+    if (pageCount > 1) {
+      html += sessPagerHtml(pageCount, sessPage);
+    }
+    html += "</div>";
+    return html;
+  }
+
+  /**
+   * Centered page numbers. Windowed when many pages.
+   * @param {number} pageCount
+   * @param {number} page 0-based
+   */
+  function sessPagerHtml(pageCount, page) {
+    const pages = pageNumbersToShow(pageCount, page);
+    let html = '<div class="usage-sess-pager" role="navigation" aria-label="Sessions pages">';
+    for (let i = 0; i < pages.length; i++) {
+      const p = pages[i];
+      if (p === "…") {
+        html += '<span class="usage-sess-pg-gap" aria-hidden="true">…</span>';
+        continue;
+      }
+      const n = /** @type {number} */ (p);
+      const on = n === page ? " on" : "";
+      html +=
+        '<button type="button" class="usage-sess-pg' +
+        on +
+        '" data-sess-page="' +
+        n +
+        '" aria-label="Page ' +
+        (n + 1) +
+        '"' +
+        (on ? ' aria-current="page"' : "") +
+        ">" +
+        (n + 1) +
+        "</button>";
+    }
+    html += "</div>";
+    return html;
+  }
+
+  /**
+   * @param {number} pageCount
+   * @param {number} page 0-based
+   * @returns {Array<number|"…">}
+   */
+  function pageNumbersToShow(pageCount, page) {
+    if (pageCount <= 7) {
+      const all = [];
+      for (let i = 0; i < pageCount; i++) all.push(i);
+      return all;
+    }
+    /** @type {Array<number|"…">} */
+    const out = [];
+    const add = function (n) {
+      if (out.length && out[out.length - 1] === n) return;
+      out.push(n);
+    };
+    add(0);
+    const lo = Math.max(1, page - 1);
+    const hi = Math.min(pageCount - 2, page + 1);
+    if (lo > 1) add("…");
+    for (let i = lo; i <= hi; i++) add(i);
+    if (hi < pageCount - 2) add("…");
+    add(pageCount - 1);
+    return out;
   }
 
   function fmt(n) {

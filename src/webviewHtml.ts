@@ -1,3 +1,5 @@
+import * as fs from "fs";
+import * as path from "path";
 import * as vscode from "vscode";
 import { WARP_W_TILES } from "./warpWTiles";
 
@@ -11,8 +13,8 @@ export function buildChatHtml(
   folderName: string
 ): string {
   const nonce = getNonce();
-  // Cache-bust local assets so Cursor/VS Code picks up CSS/JS on each release
-  const assetV = "0.9.25";
+  // Cache-bust CSS/JS from package version so hotfixes land after Reload Window
+  const assetV = readExtensionVersion(extensionUri);
   const asset = (...parts: string[]) => {
     const uri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, ...parts)
@@ -49,7 +51,7 @@ export function buildChatHtml(
     <div class="chat-top" id="chat-top">
       <span class="powered" id="powered">powered by grok</span>
       <div class="chat-top-right">
-        <button type="button" class="top-ico" id="btn-new-chat" title="New conversation" aria-label="New conversation">${iconNewChat()}</button>
+        <button type="button" class="top-ico" id="btn-new-chat" data-mode="new" title="New conversation" aria-label="New conversation">${iconNewChat()}</button>
         <button type="button" class="top-ico" id="btn-history" title="Chat history" aria-label="Chat history">${iconHistory()}</button>
         <button type="button" class="top-ico" id="btn-settings" title="Settings" aria-label="Settings">${iconSettings()}</button>
       </div>
@@ -81,7 +83,8 @@ export function buildChatHtml(
         <div class="sb">
           <div class="tray" id="tray"></div>
           <div class="sb-input">
-            <textarea id="input" rows="1" placeholder="Message Grok… · image or + for files"></textarea>
+            <div class="input-hl" id="input-hl" aria-hidden="true"></div>
+            <textarea id="input" rows="1" placeholder="Message Grok… · image or + for files" spellcheck="false"></textarea>
           </div>
           <div class="sb-bar">
             <button type="button" class="ico on" id="btn-plus" title="Attach file">${iconPlus()}</button>
@@ -94,7 +97,9 @@ export function buildChatHtml(
           </div>
         </div>
         <div class="footer-row">
-          <span class="ctx-usage" id="ctx-usage" title="Context window usage">—</span>
+          <span class="ctx-usage" id="ctx-usage" title="Context window usage">
+            <span class="ctx-seg">—</span>
+          </span>
           <button type="button" id="btn-auth">Sign in</button>
         </div>
       </div>
@@ -175,8 +180,27 @@ function getNonce(): string {
   return out;
 }
 
+/** package.json version — used as ?v= for CSS/JS so reloads pick up assets. */
+function readExtensionVersion(extensionUri: vscode.Uri): string {
+  try {
+    const raw = fs.readFileSync(
+      path.join(extensionUri.fsPath, "package.json"),
+      "utf8"
+    );
+    const v = JSON.parse(raw)?.version;
+    return typeof v === "string" && v ? v : String(Date.now());
+  } catch {
+    return String(Date.now());
+  }
+}
+
+/** Plus — new conversation (shown on chat view). */
 function iconNewChat(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M12 5v14M5 12h14"/></svg>`;
+}
+/** Chat bubble — back to chat (shown on Settings / History). */
+function iconBackToChat(): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path stroke="currentColor" stroke-width="1.5" d="M12 22c5.5228 0 10-4.4772 10-10 0-5.52285-4.4772-10-10-10C6.47715 2 2 6.47715 2 12c0 1.5997.37562 3.1116 1.04346 4.4525.17748.3563.23655.7636.13366 1.1481l-.59561 2.2261c-.25856.9663.6255 1.8503 1.59184 1.5918l2.22604-.5956c.38454-.1029.79182-.0438 1.14814.1336C8.88837 21.6244 10.4003 22 12 22Z"/></svg>`;
 }
 function iconHistory(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 8v4l3 2"/></svg>`;

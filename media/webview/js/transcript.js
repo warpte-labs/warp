@@ -25,6 +25,13 @@
       this.scrollWithStream = true;
       /** User has scrolled up — pause follow until they send or scroll to bottom */
       this._userPinned = false;
+      /** Stagger new tool rows so fast ACP bursts don't pop in all at once */
+      /** @type {HTMLElement[]} */
+      this._toolRevealQ = [];
+      this._toolRevealTimer = 0;
+      this._lastToolRevealAt = 0;
+      /** ms between revealing new tool rows (shorten if queue is long) */
+      this._toolRevealGap = 110;
       this._bindScrollGuard();
     }
 
@@ -59,6 +66,7 @@
 
     clear() {
       this.endActiveTimers();
+      this._flushToolReveal(true);
       this.active = null;
       this.root.innerHTML = "";
       this._notifyEmpty();
@@ -163,6 +171,8 @@
       this.active = {
         thinkEl: null,
         agentEl: null,
+        /** Text for the current agent card only (may split after tools) */
+        segmentAnswer: "",
         toolEls: {},
         thought: "",
         answer: "",
@@ -179,11 +189,23 @@
 
     ensureThinking() {
       const a = this.active;
-      if (!a || a.thoughtSettled) {
+      if (!a) {
         return;
+      }
+      // More thought after message/tools: open a new think card in place
+      // (never drop mid-turn reasoning — that caused "missing thinking")
+      if (a.thoughtSettled) {
+        a.thoughtSettled = false;
+        a.thinkEl = null;
+        a.thought = "";
+        if (a.timerIv) {
+          clearInterval(a.timerIv);
+          a.timerIv = null;
+        }
       }
       if (!a.thinkEl) {
         a.thinkEl = W.cards.createThinkCard();
+        // Chronological: always append (after tools / reply if any)
         this.root.appendChild(a.thinkEl);
         a.t0 = Date.now();
         a.timerIv = window.setInterval(() => {
@@ -201,7 +223,7 @@
      */
     appendThought(delta) {
       const a = this.active;
-      if (!a || !delta || a.thoughtSettled) {
+      if (!a || !delta) {
         return;
       }
       this.ensureThinking();
@@ -235,17 +257,27 @@
       if (a.thinkEl && !a.thoughtSettled) {
         this.completeThought();
       }
-      if (!a.agentEl) {
+      // Chronological flow: if tools (or anything) landed after the current
+      // agent card, open a new reply card so text continues under tools.
+      if (
+        !a.agentEl ||
+        a.agentEl.parentNode !== this.root ||
+        this.root.lastElementChild !== a.agentEl
+      ) {
         a.agentEl = W.cards.createAgentCard();
         this.root.appendChild(a.agentEl);
+        a.segmentAnswer = "";
       }
       a.answer += delta;
-      W.cards.updateAgentBody(a.agentEl, a.answer);
+      a.segmentAnswer = (a.segmentAnswer || "") + delta;
+      W.cards.updateAgentBody(a.agentEl, a.segmentAnswer);
       this.scrollToBottom();
     }
 
     /**
      * Tool / command activity (read, run, search, …).
+     * Always append in time order (never jump above the agent message).
+     * New rows are staggered so fast tool bursts still feel sequential.
      * @param {{ id?: string, title?: string, status?: string, kind?: string, target?: string, label?: string }} p
      */
     upsertTool(p) {
@@ -261,15 +293,92 @@
       if (!el) {
         el = W.tools.createToolRow({ ...p, id });
         a.toolEls[id] = el;
-        if (a.agentEl && a.agentEl.parentNode === this.root) {
-          this.root.insertBefore(el, a.agentEl);
-        } else {
-          this.root.appendChild(el);
-        }
+        el.classList.add("tool-row-enter");
+        this._enqueueToolReveal(el);
       } else {
         W.tools.updateToolRow(el, p);
+        // Already visible — keep live status updates snappy
+        if (el.isConnected) {
+          this.scrollToBottom();
+        }
       }
-      this.scrollToBottom();
+    }
+
+    /**
+     * Queue a tool row for staggered insert + fade-in.
+     * @param {HTMLElement} el
+     */
+    _enqueueToolReveal(el) {
+      if (!el) return;
+      this._toolRevealQ.push(el);
+      this._pumpToolReveal();
+    }
+
+    _toolGapMs() {
+      // Back up a little when many tools pile up so we don't lag the turn forever
+      const n = this._toolRevealQ.length;
+      if (n > 12) return 45;
+      if (n > 6) return 70;
+      return this._toolRevealGap;
+    }
+
+    _pumpToolReveal() {
+      if (this._toolRevealTimer) return;
+      const step = () => {
+        this._toolRevealTimer = 0;
+        if (!this._toolRevealQ.length) return;
+
+        const gap = this._toolGapMs();
+        const elapsed = Date.now() - this._lastToolRevealAt;
+        if (this._lastToolRevealAt && elapsed < gap) {
+          this._toolRevealTimer = window.setTimeout(step, gap - elapsed);
+          return;
+        }
+
+        const el = this._toolRevealQ.shift();
+        if (el && !el.isConnected && this.root) {
+          this.root.appendChild(el);
+          // Next frame: animate from enter → in
+          requestAnimationFrame(() => {
+            if (el.isConnected) {
+              el.classList.add("tool-row-in");
+              el.classList.remove("tool-row-enter");
+            }
+          });
+          this._lastToolRevealAt = Date.now();
+          this.scrollToBottom();
+        }
+
+        if (this._toolRevealQ.length) {
+          this._toolRevealTimer = window.setTimeout(step, this._toolGapMs());
+        }
+      };
+      step();
+    }
+
+    /**
+     * @param {boolean} [instant] skip animation (clear / end of turn)
+     */
+    _flushToolReveal(instant) {
+      if (this._toolRevealTimer) {
+        clearTimeout(this._toolRevealTimer);
+        this._toolRevealTimer = 0;
+      }
+      while (this._toolRevealQ.length) {
+        const el = this._toolRevealQ.shift();
+        if (!el || el.isConnected || !this.root) continue;
+        this.root.appendChild(el);
+        if (instant) {
+          el.classList.remove("tool-row-enter");
+          el.classList.add("tool-row-in");
+        } else {
+          requestAnimationFrame(() => {
+            el.classList.add("tool-row-in");
+            el.classList.remove("tool-row-enter");
+          });
+        }
+      }
+      this._lastToolRevealAt = 0;
     }
 
     endTurn() {
@@ -277,6 +386,8 @@
       if (a && a.thinkEl && !a.thoughtSettled) {
         this.completeThought();
       }
+      // Show any still-queued tool rows so nothing is lost after the turn
+      this._flushToolReveal(false);
       this.endActiveTimers();
     }
 

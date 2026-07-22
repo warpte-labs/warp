@@ -20,25 +20,35 @@ export type HistoryMessage = {
   text: string;
 };
 
+/** Lightweight session row for Usage table (summary.json only — no transcripts). */
+export type SessionLite = {
+  id: string;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
+};
+
 /**
- * Cheap session counts for Usage — summary.json only, no transcript previews.
+ * Cheap session list for Usage — summary.json only, no transcript previews.
  * Avoids the expensive firstUserPreview() walks used by listLocalSessions.
  */
-export function summarizeLocalSessions(): {
+export function listSessionsLite(limit = 80): {
   sessions: number;
   messages: number;
+  items: SessionLite[];
 } {
   const root = path.join(grokHome(), "sessions");
+  const items: SessionLite[] = [];
   let sessions = 0;
   let messages = 0;
   if (!fs.existsSync(root)) {
-    return { sessions: 0, messages: 0 };
+    return { sessions: 0, messages: 0, items: [] };
   }
   let groups: string[] = [];
   try {
     groups = fs.readdirSync(root);
   } catch {
-    return { sessions: 0, messages: 0 };
+    return { sessions: 0, messages: 0, items: [] };
   }
   for (const group of groups) {
     if (group === "session_search.sqlite" || group.startsWith(".")) continue;
@@ -62,18 +72,49 @@ export function summarizeLocalSessions(): {
       try {
         if (!fs.existsSync(summaryPath)) continue;
         const raw = JSON.parse(fs.readFileSync(summaryPath, "utf8")) as {
+          info?: { id?: string };
+          generated_title?: string;
+          session_summary?: string;
+          last_active_at?: string;
+          updated_at?: string;
+          created_at?: string;
           num_chat_messages?: number;
           num_messages?: number;
         };
+        const id = String(raw.info?.id || sid);
+        const msg = raw.num_chat_messages ?? raw.num_messages ?? 0;
         sessions += 1;
-        messages +=
-          raw.num_chat_messages ?? raw.num_messages ?? 0;
+        messages += msg;
+        const title =
+          String(raw.generated_title || raw.session_summary || "")
+            .trim()
+            .slice(0, 80) || `Chat ${id.slice(0, 8)}`;
+        const updatedAt =
+          raw.last_active_at ||
+          raw.updated_at ||
+          raw.created_at ||
+          "";
+        items.push({ id, title, updatedAt, messageCount: msg });
       } catch {
         /* skip */
       }
     }
   }
-  return { sessions, messages };
+  items.sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt));
+  return {
+    sessions,
+    messages,
+    items: items.slice(0, Math.max(1, limit)),
+  };
+}
+
+/** @deprecated use listSessionsLite */
+export function summarizeLocalSessions(): {
+  sessions: number;
+  messages: number;
+} {
+  const s = listSessionsLite(1);
+  return { sessions: s.sessions, messages: s.messages };
 }
 
 /**

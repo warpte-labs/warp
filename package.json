@@ -2,8 +2,8 @@
   "name": "warp",
   "displayName": "Warp â€” Grok Sidebar Agent",
   "description": "Secondary-sidebar coding agent for VS Code & Cursor. Chat with Grok Build over ACP: tools, slash commands, model/effort, history, and OAuth.",
-  "version": "0.9.55",
-  "publisher": "warp-agent",
+  "version": "0.9.59",
+  "publisher": "WarpteLabs",
   "license": "MIT",
   "icon": "media/icon.png",
   "repository": {
@@ -101,7 +101,7 @@
             "yolo"
           ],
           "default": "ask",
-          "markdownDescription": "Tool permission mode. **ask** â€” prompt every tool. **auto** â€” allow safe/read tools, prompt for writes and shell. **yolo** â€” skip prompts (`--always-approve`). YOLO requires confirmation in the UI."
+          "markdownDescription": "Tool permission mode. **ask** Ã¢â‚¬â€ prompt every tool. **auto** Ã¢â‚¬â€ allow safe/read tools, prompt for writes and shell. **yolo** Ã¢â‚¬â€ skip prompts (`--always-approve`). YOLO requires confirmation in the UI."
         },
         "warp.alwaysApprove": {
           "type": "boolean",
@@ -127,7 +127,7 @@
             "strict"
           ],
           "default": "off",
-          "markdownDescription": "Sandbox limits for agent tools (stored for Grok CLI profiles). **off** â€” no extra limits. **workspace** â€” project folder. **read-only** â€” no writes. **strict** â€” tightest profile."
+          "markdownDescription": "Sandbox limits for agent tools (stored for Grok CLI profiles). **off** Ã¢â‚¬â€ no extra limits. **workspace** Ã¢â‚¬â€ project folder. **read-only** Ã¢â‚¬â€ no writes. **strict** Ã¢â‚¬â€ tightest profile."
         },
         "warp.showThinking": {
           "type": "boolean",
@@ -149,7 +149,7 @@
           "default": 100,
           "minimum": 0,
           "maximum": 100,
-          "markdownDescription": "Auto-compact when context usage reaches this percent (0â€“100). **0 = off Â· 100 = only at full context.** Also writes Grok `[session] auto_compact_threshold_percent`."
+          "markdownDescription": "Auto-compact when context usage reaches this percent (0Ã¢â‚¬â€œ100). **0 = off Ã‚Â· 100 = only at full context.** Also writes Grok `[session] auto_compact_threshold_percent`."
         },
         "warp.binaryPath": {
           "type": "string",
@@ -165,6 +165,11 @@
           "type": "boolean",
           "default": false,
           "description": "UI-only mock replies without spawning the agent (for development)."
+        },
+        "warp.billingApiBase": {
+          "type": "string",
+          "default": "https://warpte.com",
+          "markdownDescription": "Base URL for Warp Pro billing (Stripe checkout + license check). No trailing slash."
         }
       }
     }
@@ -183,6 +188,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "ably": "^2.25.0",
     "echarts": "^5.5.1",
     "marked": "^18.0.7"
   }

@@ -9,6 +9,11 @@
 
   const CATS = [
     {
+      id: "account",
+      label: "Account & billing",
+      dek: "Plan, trial, Subscribe ($5/mo), sign-in.",
+    },
+    {
       id: "permissions",
       label: "Permissions",
       dek: "When tools need your OK.",
@@ -47,11 +52,6 @@
       id: "connection",
       label: "Connection",
       dek: "Only if Grok isn’t found automatically.",
-    },
-    {
-      id: "account",
-      label: "Account",
-      dek: "Sign-in and account actions.",
     },
   ];
 
@@ -188,6 +188,11 @@
         return;
       }
 
+      // Billing: re-sync plan from Stripe when opening Account
+      if (id === "account") {
+        opts.post({ type: "syncPlan" });
+      }
+
       const s = snapshot;
       const mode = String(s.permissionMode || (s.alwaysApprove ? "yolo" : "ask"));
       let body = "";
@@ -286,18 +291,67 @@
           "Auto-detect"
         );
       } else if (id === "account") {
+        // ── Billing (always visible) ──
+        const isPro = !!(s.planPro || s.planKind === "pro");
+        const planTone = isPro
+          ? "ok"
+          : s.planKind === "expired"
+            ? "bad"
+            : "";
         body += fieldRo(
-          "Signed in",
+          "Warp plan",
+          String(s.planLabel || "Free trial"),
+          planTone
+        );
+        body +=
+          '<div class="set-tt-blk"><div class="set-h">' +
+          esc(
+            String(
+              s.planDetail ||
+                "7-day free trial · then Warp Pro $5/mo"
+            )
+          ) +
+          "</div></div>";
+        if (s.billingEmail) {
+          body += fieldRo("Billing email", String(s.billingEmail), "");
+        }
+        // Always show Subscribe unless confirmed Pro (stale cache fixed via syncPlan)
+        if (!isPro) {
+          body += fieldAction(
+            "subscribe",
+            "Warp Pro",
+            "$5/mo · full access after trial · cancel anytime",
+            "Subscribe"
+          );
+        }
+        body += fieldAction(
+          "refreshPlan",
+          "Refresh plan",
+          "Sync status from Stripe after checkout or cancel",
+          "Refresh"
+        );
+        body += fieldAction(
+          "manageBilling",
+          "Manage billing",
+          "Stripe portal — invoices, cancel, payment method",
+          "Manage"
+        );
+
+        // ── Grok account ──
+        body += fieldRo(
+          "Grok signed in",
           s.signedIn ? "Yes" : "No",
           s.signedIn ? "ok" : "bad"
         );
         if (s.version) {
-          body += fieldRo("Version", String(s.version), "");
+          body += fieldRo("Warp version", String(s.version), "");
         }
         body += fieldAction(
           s.signedIn ? "signOut" : "signIn",
-          s.signedIn ? "Sign out" : "Sign in",
-          s.signedIn ? "Clear Grok session on this machine" : "Open Grok login"
+          s.signedIn ? "Sign out of Grok" : "Sign in with Grok",
+          s.signedIn
+            ? "Clear Grok session on this machine"
+            : "Open Grok login"
         );
       }
 
@@ -433,7 +487,7 @@
       );
     }
 
-    function fieldAction(key, label, hint) {
+    function fieldAction(key, label, hint, btnLabel) {
       return (
         '<div class="set-tt-blk">' +
         '<div class="set-k">' +
@@ -442,7 +496,9 @@
         (hint ? '<div class="set-h">' + esc(hint) + "</div>" : "") +
         '<button type="button" class="set-sv set-act" data-action="' +
         esc(key) +
-        '">Open</button>' +
+        '">' +
+        esc(btnLabel || "Open") +
+        "</button>" +
         "</div>"
       );
     }

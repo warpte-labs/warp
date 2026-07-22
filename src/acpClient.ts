@@ -531,7 +531,11 @@ export class AcpClient extends EventEmitter {
       return;
     }
 
-    if (msg.method === "session/update" && msg.params) {
+    // Standard ACP streaming (Grok agent mode)
+    if (
+      (msg.method === "session/update" || msg.method === "session_update") &&
+      msg.params
+    ) {
       // Grok puts live usage on params._meta.totalTokens
       this.noteTokensFromMeta(msg.params._meta);
       this.handleSessionUpdate(msg.params);
@@ -548,6 +552,17 @@ export class AcpClient extends EventEmitter {
     method: string,
     params: Record<string, unknown>
   ): void {
+    // Grok also streams prompt turns as x.ai/session/update (same payload shape)
+    if (
+      method === "_x.ai/session/update" ||
+      method === "x.ai/session/update" ||
+      method.endsWith("/session/update")
+    ) {
+      this.noteTokensFromMeta(params._meta);
+      this.handleSessionUpdate(params);
+      return;
+    }
+
     // Full model catalog refresh
     if (
       method === "_x.ai/models/update" ||
@@ -648,20 +663,32 @@ export class AcpClient extends EventEmitter {
   }
 
   private handleSessionUpdate(params: Record<string, unknown>): void {
-    const update = params.update as Record<string, unknown> | undefined;
+    // Accept either { update: { sessionUpdate, ... } } or a flat update object
+    const nested = params.update as Record<string, unknown> | undefined;
+    const update =
+      nested && typeof nested === "object"
+        ? nested
+        : (params as Record<string, unknown>);
     if (!update) {
       return;
     }
     // Also check update-level _meta
     this.noteTokensFromMeta(update._meta);
-    const kind = String(update.sessionUpdate || "");
-    if (kind === "agent_message_chunk") {
-      const text = textFromContent(update.content);
+    this.noteTokensFromMeta(params._meta);
+    const kind = String(
+      update.sessionUpdate || update.session_update || ""
+    );
+    if (kind === "agent_message_chunk" || kind === "agent_message") {
+      const text = textFromContent(update.content ?? update.delta);
       if (text) {
         this.emit("message", { text });
       }
-    } else if (kind === "agent_thought_chunk") {
-      const text = textFromContent(update.content);
+    } else if (
+      kind === "agent_thought_chunk" ||
+      kind === "agent_thought" ||
+      kind === "thought_chunk"
+    ) {
+      const text = textFromContent(update.content ?? update.delta);
       if (text) {
         this.emit("thought", { text });
       }

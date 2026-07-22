@@ -137,11 +137,10 @@
 
     function openPicker(seed) {
       query = seed || "";
-      atStart = opts.input.selectionStart ?? opts.input.value.length;
       // If not already on @, insert @
       const ta = opts.input;
       const caret = ta.selectionStart ?? ta.value.length;
-      const ch = ta.value[caret - 1];
+      const ch = caret > 0 ? ta.value[caret - 1] : "";
       if (ch !== "@") {
         const before = ta.value.slice(0, caret);
         const after = ta.value.slice(caret);
@@ -155,6 +154,8 @@
       request(query);
       render();
       ta.focus();
+      // Fire input so composer highlight mirror redraws (textarea text is transparent)
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
     function onInput() {

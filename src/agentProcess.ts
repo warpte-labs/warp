@@ -157,11 +157,25 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
       this.emit("status", `${label} mode (mock)`);
       return next;
     }
+
+    // session/new after restart returns default effort (often high). Save and
+    // re-apply so YOLO does not wipe the user's chosen reasoning effort.
+    const saved = this.acp.getModelState();
+    const savedModelId = saved.currentModelId;
+    const savedEffort = saved.reasoningEffort;
+
     this.acp.stop();
     const auth = getAuthStatus();
     if (auth.signedIn) {
       try {
         await this.acp.ensureSession();
+        if (savedModelId) {
+          try {
+            await this.acp.setModel(savedModelId, savedEffort);
+          } catch {
+            /* session is up; effort restore is best-effort */
+          }
+        }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
         // Don't leave UI thinking yolo/ask flipped if restart failed

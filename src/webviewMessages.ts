@@ -47,6 +47,26 @@ import {
   resolveBinary,
   workspaceCwd,
 } from "./paths";
+import {
+  assertCanUseAgent,
+  clearProCache,
+  getLicenseStatusLocal,
+  licenseSettingsFields,
+  onLicenseChange,
+  openBillingPortal,
+  refreshProFromServer,
+  startCheckout,
+} from "./license";
+
+/** Push plan fields into settings when Ably/poll unlocks Pro. */
+let licenseUiWired = false;
+function ensureLicenseUiBridge(ctx: MessageContext): void {
+  if (licenseUiWired) return;
+  licenseUiWired = true;
+  onLicenseChange(() => {
+    postSettings(ctx);
+  });
+}
 
 export type PostFn = (message: unknown) => void;
 export type LogFn = (line: string) => void;
@@ -67,6 +87,7 @@ export async function handleWebviewMessage(
   const type = String(msg.type || "");
   switch (type) {
     case "ready":
+      ensureLicenseUiBridge(ctx);
       ctx.pushAuthStatus();
       postPermissionMode(ctx);
       // Seed settings snapshot (transcript prefs apply without opening panel)
@@ -126,6 +147,12 @@ export async function handleWebviewMessage(
       await handleRenameSession(msg, ctx);
       return;
     case "getSettings":
+      postSettings(ctx);
+      return;
+    case "syncPlan":
+      // Account screen opened — drop stale Pro cache and re-check Stripe
+      await clearProCache();
+      await refreshProFromServer();
       postSettings(ctx);
       return;
     case "updateSetting":
@@ -211,6 +238,7 @@ function postSettings(
     signedIn: auth.signedIn,
     agentCwd: workspaceCwd(),
     version,
+    ...licenseSettingsFields(),
   });
 }
 
@@ -329,6 +357,34 @@ async function handleSettingsAction(
       await ctx.uiCommand?.("signOut");
       return;
     }
+    if (action === "subscribe") {
+      await startCheckout();
+      postSettings(ctx);
+      return;
+    }
+    if (action === "refreshPlan") {
+      ctx.post({ type: "toast", text: "Checking subscription…" });
+      // Drop local cache so cancel / retest is visible immediately
+      await clearProCache();
+      await refreshProFromServer();
+      const st = getLicenseStatusLocal();
+      ctx.post({
+        type: "toast",
+        text: st.pro
+          ? "Warp Pro active — thank you!"
+          : st.kind === "trial"
+            ? `Trial: ${st.detail}`
+            : st.kind === "none"
+              ? "No Pro yet — trial starts on first message"
+              : "No active subscription for that email yet.",
+      });
+      postSettings(ctx);
+      return;
+    }
+    if (action === "manageBilling") {
+      await openBillingPortal();
+      return;
+    }
     // Preferred path is webview onRunSlash → composer.runSlash("/mcps"|…).
     // Host fallback if client couldn't close settings / run slash itself.
     const slashFallback: Record<string, string> = {
@@ -362,6 +418,19 @@ async function handlePrompt(
   ctx: MessageContext
 ): Promise<void> {
   if (!requireSignedIn(ctx)) return;
+
+  const gate = await assertCanUseAgent();
+  if (!gate.ok) {
+    ctx.post({
+      type: "error",
+      text:
+        gate.message ||
+        "Trial ended. Open Settings → Account to subscribe ($5/mo).",
+    });
+    ctx.post({ type: "license", ...gate.status });
+    ctx.post({ type: "turn", phase: "end" });
+    return;
+  }
 
   const text = typeof msg.text === "string" ? msg.text.trim() : "";
   const attachments = (Array.isArray(msg.attachments)
@@ -466,6 +535,7 @@ function handleGetUsage(
       },
       series: { range, labels: [], values: [], unit: "tokens" },
       daily: [],
+      sessions: [],
       credits: null,
       note: "",
     });
