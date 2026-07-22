@@ -2,7 +2,7 @@
   "name": "warp",
   "displayName": "Warp — Grok Sidebar Agent",
   "description": "Secondary-sidebar coding agent for VS Code & Cursor. Chat with Grok Build over ACP: tools, slash commands, model/effort, history, and OAuth.",
-  "version": "0.8.4",
+  "version": "0.9.34",
   "publisher": "warp-agent",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -93,6 +93,64 @@
     "configuration": {
       "title": "Warp",
       "properties": {
+        "warp.permissionMode": {
+          "type": "string",
+          "enum": [
+            "ask",
+            "auto",
+            "yolo"
+          ],
+          "default": "ask",
+          "markdownDescription": "Tool permission mode. **ask** — prompt every tool. **auto** — allow safe/read tools, prompt for writes and shell. **yolo** — skip prompts (`--always-approve`). YOLO requires confirmation in the UI."
+        },
+        "warp.alwaysApprove": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Legacy alias for YOLO. Prefer `warp.permissionMode`. When true, treated as **yolo** if `permissionMode` is unset."
+        },
+        "warp.defaultEffort": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "high",
+          "markdownDescription": "Default reasoning effort for new turns when the model supports it."
+        },
+        "warp.sandboxProfile": {
+          "type": "string",
+          "enum": [
+            "off",
+            "workspace",
+            "read-only",
+            "strict"
+          ],
+          "default": "off",
+          "markdownDescription": "Sandbox limits for agent tools (stored for Grok CLI profiles). **off** — no extra limits. **workspace** — project folder. **read-only** — no writes. **strict** — tightest profile."
+        },
+        "warp.showThinking": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show reasoning/thinking blocks in the chat transcript."
+        },
+        "warp.groupToolRows": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Collapse noisy tool activity into grouped rows in the transcript."
+        },
+        "warp.scrollWithStream": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "When on, the chat scrolls to the bottom as tokens stream. Turn off to stay put while reading earlier messages."
+        },
+        "warp.autoCompactPercent": {
+          "type": "number",
+          "default": 100,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "Auto-compact when context usage reaches this percent (0–100). **0 = off · 100 = only at full context.** Also writes Grok `[session] auto_compact_threshold_percent`."
+        },
         "warp.binaryPath": {
           "type": "string",
           "default": "",
@@ -102,11 +160,6 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Folder the agent uses when **no workspace folder** is open. Empty = `~/.warp/workspace` (clean sandbox). Does not override an open project folder."
-        },
-        "warp.alwaysApprove": {
-          "type": "boolean",
-          "default": false,
-          "markdownDescription": "When enabled, the agent starts with `--always-approve` (skip tool permission prompts). Prefer **off** on untrusted workspaces. Toggle with `/always-approve` or the footer **yolo/ask** chip."
         },
         "warp.mockMode": {
           "type": "boolean",
@@ -130,6 +183,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "echarts": "^5.5.1",
     "marked": "^18.0.7"
   }
 }

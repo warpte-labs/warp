@@ -2,6 +2,34 @@
 
 All notable changes to **Warp** are documented in this file.
 
+## [0.9.34] — 2026-07-22
+
+### Usage (real tokens)
+- Chart + daily breakdown from `shell.turn.inference_done` in `~/.grok/logs/unified.jsonl`
+- Tracks prompt / cached / completion / reasoning tokens per day and session
+- Credits bar from Grok billing log (`creditUsagePercent` + period reset)
+- Fast path: mtime/size cache, append-only log tail, summary-only session counts
+
+### Settings
+- Categorized settings, permission toggles, Usage drill-in (ECharts)
+
+## [0.9.0] — 2026-07-22
+
+
+### Security
+- **Ask mode is real**: tool `session/request_permission` shows a QuickPick (no longer auto-allows)
+- **YOLO confirm**: enabling always-approve requires a modal confirmation
+- **Write guard**: ACP file writes outside the workspace blocked while in ask mode
+- **Path hardening**: webview open/attach paths go through shared safe resolvers
+- **Auth gate**: prompt/compact require signed-in session on the host
+
+### Architecture (DRY / modular)
+- `config.ts` — single settings source
+- `util.ts` — shared `errMsg` / `delay`
+- `security/paths.ts` + `security/permissions.ts`
+- `commands.ts` — thin `extension.ts`
+- Webview `util.js` for shared format/escape helpers
+
 ## [0.8.1] — 2026-07-22
 
 ### Public release packaging

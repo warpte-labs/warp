@@ -62,7 +62,12 @@
     },
     {
       name: "auto",
-      description: "Turn off always-approve (ask mode)",
+      description: "Auto mode — safe tools free; writes/shell still ask",
+      source: "warp",
+    },
+    {
+      name: "ask",
+      description: "Ask mode — prompt before tools",
       source: "warp",
     },
     {

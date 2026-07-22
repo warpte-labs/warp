@@ -36,6 +36,15 @@
     },
   });
 
+  /** @type {{ setOpen: (o: boolean) => void, apply: Function }} */
+  let settingsUi = {
+    setOpen: function () {},
+    apply: function () {},
+  };
+
+  /** set after composer mounts — Settings → Extensions uses this */
+  let runSlashFn = function (/** @type {string} */ _cmd) {};
+
   const historyUi = W.history.mount({
     root: els.root,
     panel: els.historyPanel,
@@ -47,7 +56,37 @@
     btnBack: els.btnHistoryBack,
     btnRefresh: els.btnHistoryRefresh,
     post,
+    onOpenChange(open) {
+      if (open) settingsUi.setOpen(false);
+    },
   });
+
+  settingsUi =
+    W.settings && els.settingsPanel
+      ? W.settings.mount({
+          root: els.root,
+          panel: els.settingsPanel,
+          list: els.settingsList,
+          titleEl: els.settingsTitle,
+          btnOpen: els.btnSettings,
+          btnBack: els.btnSettingsBack,
+          post,
+          onOpenChange(open) {
+            if (open) historyUi.setOpen(false);
+          },
+          onRunSlash(cmd) {
+            runSlashFn(cmd);
+          },
+          onPrefs(prefs) {
+            if (prefs && typeof prefs.scrollWithStream === "boolean") {
+              transcript.setScrollWithStream(prefs.scrollWithStream);
+            }
+          },
+          toast(text) {
+            showToast(text);
+          },
+        })
+      : settingsUi;
 
   const attach = W.attach.mount({
     tray: els.tray,
@@ -98,6 +137,7 @@
       })
     : {
         applyModels: function () {},
+        applyPermissionMode: function () {},
         setOpen: function () {},
         getState: function () {
           return null;
@@ -138,8 +178,17 @@
     },
   });
 
+  // Settings → Extensions: run /mcps · /skills · /plugins as real agent turns
+  runSlashFn = function (cmd) {
+    if (typeof composer.runSlash === "function") {
+      composer.runSlash(cmd);
+    } else {
+      post({ type: "prompt", text: cmd, attachments: [], mentions: [] });
+    }
+  };
+
   let signedIn = false;
-  let alwaysApprove = true;
+  let alwaysApprove = false;
   let gateIntroPlayed = false;
 
   /**
@@ -178,24 +227,31 @@
   }
 
   function applyPermissionMode(msg) {
-    alwaysApprove = !!msg.alwaysApprove;
-    if (els.permChip) {
-      els.permChip.textContent = alwaysApprove ? "yolo" : "ask";
-      els.permChip.title = alwaysApprove
-        ? "Always-approve on — click to require tool prompts"
-        : "Ask mode — click to auto-approve tools";
-      els.permChip.classList.toggle("yolo", alwaysApprove);
-      els.permChip.classList.toggle("ask", !alwaysApprove);
+    const mode =
+      msg &&
+      (msg.permissionMode === "auto" ||
+        msg.permissionMode === "yolo" ||
+        msg.permissionMode === "ask")
+        ? msg.permissionMode
+        : msg && msg.alwaysApprove
+          ? "yolo"
+          : "ask";
+    alwaysApprove = mode === "yolo";
+    modelSelector?.applyPermissionMode?.(msg || { permissionMode: mode });
+    if (els.root) {
+      els.root.classList.toggle("mode-yolo", mode === "yolo");
+      els.root.classList.toggle("mode-auto", mode === "auto");
+      els.root.classList.toggle("mode-ask", mode === "ask");
     }
   }
 
-  function formatTok(n) {
+  const formatTok = (W.util && W.util.formatTok) || function (n) {
     if (!Number.isFinite(n) || n < 0) return "—";
     if (n < 1000) return String(Math.round(n));
     if (n < 10_000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
     if (n < 1_000_000) return Math.round(n / 1000) + "k";
     return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
-  }
+  };
 
   function applyContext(msg) {
     if (!els.ctxUsage) return;
@@ -241,9 +297,6 @@
     post({ type: "compact" });
   });
 
-  els.permChip?.addEventListener("click", () => {
-    post({ type: "setAlwaysApprove", on: !alwaysApprove });
-  });
 
   const bridge = W.hostBridge.mount({
     transcript,
@@ -259,6 +312,7 @@
     applyContext,
     applyPermissionMode,
     showToast,
+    settingsUi,
   });
 
   composer.bind();

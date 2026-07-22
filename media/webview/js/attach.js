@@ -206,51 +206,81 @@
           err = "Max " + MAX_ITEMS + " attachments";
           break;
         }
+        // Explorer drops may omit name/type; recover from Electron .path
+        const epath = String(/** @type {any} */ (file).path || "");
+        let name = file.name || "";
+        if (!name && epath) {
+          name = epath.split(/[/\\]/).pop() || "file";
+        }
+        if (!name) name = "file";
+
         const isImage =
           (file.type || "").startsWith("image/") ||
-          /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif|heic)$/i.test(
-            file.name || ""
-          );
+          /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif|heic)$/i.test(name);
         if (imageOnly && !isImage) {
           continue;
         }
-        if (isImage && file.size > MAX_IMAGE_BYTES) {
-          err = file.name + " is too large (max 12 MB images)";
+        // size 0 can still be readable via FileReader or host path — don't skip yet
+        if (file.size > 0 && isImage && file.size > MAX_IMAGE_BYTES) {
+          err = name + " is too large (max 12 MB images)";
           continue;
         }
-        if (!isImage && file.size > MAX_FILE_BYTES) {
-          err = file.name + " is too large (max 4 MB files)";
+        if (file.size > 0 && !isImage && file.size > MAX_FILE_BYTES) {
+          err = name + " is too large (max 4 MB files)";
           continue;
         }
 
         const id = "a" + ++uid;
         const base = {
           id,
-          name: file.name,
-          mime: file.type || "application/octet-stream",
-          size: file.size,
+          name,
+          mime:
+            file.type ||
+            (isImage ? "image/png" : "application/octet-stream"),
+          size: file.size || 0,
           isImage,
         };
 
         try {
           if (isImage) {
             const dataUrl = await readAsDataURL(file);
+            if (!dataUrl || dataUrl.length < 32) {
+              throw new Error("empty image data");
+            }
+            const dataBase64 = dataUrl.replace(/^data:[^;]+;base64,/, "");
+            let previewUrl = "";
+            try {
+              previewUrl = URL.createObjectURL(file);
+            } catch {
+              previewUrl = dataUrl;
+            }
+            items.push({
+              ...base,
+              size: base.size || Math.floor((dataBase64.length * 3) / 4),
+              previewUrl,
+              dataBase64,
+            });
+          } else if (isProbablyText(file) || isProbablyText({ name, type: file.type })) {
+            const text = await readAsText(file);
+            items.push({
+              ...base,
+              size: base.size || text.length,
+              text,
+            });
+          } else {
+            const dataUrl = await readAsDataURL(file);
+            if (!dataUrl || dataUrl.length < 32) {
+              throw new Error("empty file data");
+            }
             const dataBase64 = dataUrl.replace(/^data:[^;]+;base64,/, "");
             items.push({
               ...base,
-              previewUrl: URL.createObjectURL(file),
+              size: base.size || Math.floor((dataBase64.length * 3) / 4),
               dataBase64,
             });
-          } else if (isProbablyText(file)) {
-            const text = await readAsText(file);
-            items.push({ ...base, text });
-          } else {
-            const dataUrl = await readAsDataURL(file);
-            const dataBase64 = dataUrl.replace(/^data:[^;]+;base64,/, "");
-            items.push({ ...base, dataBase64 });
           }
         } catch (e) {
-          err = "Failed to read " + file.name;
+          err = "Failed to read " + name;
         }
       }
       render();
@@ -258,7 +288,8 @@
     }
 
     function isProbablyText(file) {
-      const t = (file.type || "").toLowerCase();
+      const t = String((file && file.type) || "").toLowerCase();
+      const name = String((file && file.name) || "");
       if (t.startsWith("text/")) {
         return true;
       }
@@ -268,7 +299,7 @@
         return true;
       }
       return /\.(txt|md|json|js|ts|tsx|jsx|css|html|xml|yml|yaml|csv|rs|py|go|java|c|cpp|h|hpp|toml|ini|log|sh|ps1|env)$/i.test(
-        file.name
+        name
       );
     }
 

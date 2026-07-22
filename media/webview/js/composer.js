@@ -233,19 +233,23 @@
         toast("Effort → " + effort);
         return true;
       }
-      if (cmd === "always-approve") {
+      if (cmd === "always-approve" || cmd === "yolo") {
         const a = args.toLowerCase();
-        if (a === "on" || a === "true" || a === "1") {
-          post({ type: "setAlwaysApprove", on: true });
+        if (a === "on" || a === "true" || a === "1" || !a) {
+          post({ type: "setPermissionMode", mode: "yolo" });
         } else if (a === "off" || a === "false" || a === "0") {
-          post({ type: "setAlwaysApprove", on: false });
+          post({ type: "setPermissionMode", mode: "ask" });
         } else {
-          post({ type: "setAlwaysApprove" }); // toggle
+          post({ type: "setPermissionMode", mode: "yolo" });
         }
         return true;
       }
+      if (cmd === "ask") {
+        post({ type: "setPermissionMode", mode: "ask" });
+        return true;
+      }
       if (cmd === "auto") {
-        post({ type: "setAlwaysApprove", on: false });
+        post({ type: "setPermissionMode", mode: "auto" });
         return true;
       }
       if (cmd === "rename" || cmd === "title") {
@@ -408,85 +412,157 @@
         autoSize();
       });
 
-      // ── Drag-and-drop attach (OS Explorer → webview) ──
-      // VS Code/Cursor webviews only fire drop if dragover is ALWAYS preventDefault'd.
-      const dropShell = els.composerSlot || els.root;
+      // ── Drag-and-drop attach (OS File Explorer → webview) ──
+      // VS Code/Cursor: must preventDefault on dragover or drop never fires.
+      // Explorer often gives empty File blobs — prefer Electron file.path / URIs → host.
+      const dropRoot = els.root || document.body;
+      const dropShell = els.composerSlot || dropRoot;
       const sb = dropShell?.querySelector?.(".sb") || null;
       let dragDepth = 0;
 
       function setDropActive(on) {
+        dropRoot?.classList.toggle("drop-active", !!on);
         dropShell?.classList.toggle("drop-active", !!on);
         sb?.classList.toggle("drop-active", !!on);
       }
 
-      function pointInComposer(clientX, clientY) {
-        const el = dropShell || sb;
-        if (!el) return false;
-        const r = el.getBoundingClientRect();
-        return (
-          clientX >= r.left &&
-          clientX <= r.right &&
-          clientY >= r.top &&
-          clientY <= r.bottom
-        );
-      }
-
-      /** Collect File objects — prefer items API (more reliable in Electron). */
-      function collectFiles(dt) {
-        /** @type {File[]} */
-        const out = [];
-        if (!dt) return out;
+      function isFileDrag(dt) {
+        if (!dt) return false;
         try {
-          if (dt.items && dt.items.length) {
-            for (let i = 0; i < dt.items.length; i++) {
-              const item = dt.items[i];
-              if (item && item.kind === "file") {
-                const f = item.getAsFile();
-                if (f) out.push(f);
+          if (dt.types) {
+            for (let i = 0; i < dt.types.length; i++) {
+              const t = String(dt.types[i] || "").toLowerCase();
+              if (
+                t === "files" ||
+                t === "application/x-moz-file" ||
+                t.indexOf("uri-list") >= 0 ||
+                t === "text/plain"
+              ) {
+                return true;
               }
             }
           }
         } catch {
           /* ignore */
         }
-        if (!out.length && dt.files && dt.files.length) {
-          for (let i = 0; i < dt.files.length; i++) {
-            out.push(dt.files[i]);
+        return !!(dt.files && dt.files.length);
+      }
+
+      /** @returns {{ files: File[], paths: string[] }} */
+      function collectDropPayload(dt) {
+        /** @type {File[]} */
+        const files = [];
+        /** @type {string[]} */
+        const paths = [];
+        if (!dt) return { files, paths };
+
+        // 1) DataTransferItemList (Electron / Chromium)
+        try {
+          if (dt.items && dt.items.length) {
+            for (let i = 0; i < dt.items.length; i++) {
+              const item = dt.items[i];
+              if (!item || item.kind !== "file") continue;
+              const f = item.getAsFile();
+              if (!f) continue;
+              // Electron: File has non-standard .path from OS explorer
+              const p =
+                /** @type {any} */ (f).path ||
+                /** @type {any} */ (f).webkitRelativePath;
+              if (typeof p === "string" && p.length > 2 && /[/\\]/.test(p)) {
+                paths.push(p);
+              } else if (f.size > 0 || (f.name && f.name.length)) {
+                files.push(f);
+              }
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+
+        // 2) FileList fallback
+        try {
+          if (dt.files && dt.files.length) {
+            for (let i = 0; i < dt.files.length; i++) {
+              const f = dt.files[i];
+              if (!f) continue;
+              const p = /** @type {any} */ (f).path;
+              if (typeof p === "string" && p.length > 2 && /[/\\]/.test(p)) {
+                if (paths.indexOf(p) < 0) paths.push(p);
+              } else if (
+                (f.size > 0 || (f.name && f.name.length)) &&
+                !files.includes(f)
+              ) {
+                files.push(f);
+              }
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+
+        // 3) URI list / plain text paths (Windows Explorer, some IDEs)
+        for (const p of uriPaths(dt)) {
+          if (paths.indexOf(p) < 0) paths.push(p);
+        }
+
+        return { files, paths };
+      }
+
+      function uriPaths(dt) {
+        if (!dt || !dt.getData) return [];
+        const chunks = [];
+        const tryTypes = [
+          "text/uri-list",
+          "text/plain",
+          "URL",
+          "text/x-moz-url",
+        ];
+        for (const t of tryTypes) {
+          try {
+            const raw = dt.getData(t);
+            if (raw && String(raw).trim()) chunks.push(String(raw));
+          } catch {
+            /* type not available until drop on some browsers */
+          }
+        }
+        const out = [];
+        for (const raw of chunks) {
+          for (const line of raw.split(/\r?\n/)) {
+            let s = line.trim();
+            if (!s || s.startsWith("#")) continue;
+            // text/x-moz-url: url\ntitle pairs
+            if (/^https?:/i.test(s) && !/^file:/i.test(s)) continue;
+            try {
+              if (/^file:/i.test(s)) {
+                // file:///C:/Users/... or file://localhost/C:/...
+                s = s.replace(/^file:\/\/\/?/i, "");
+                s = decodeURIComponent(s);
+                if (/^\/[A-Za-z]:/.test(s)) s = s.slice(1); // /C:/ → C:/
+                s = s.replace(/\//g, "\\"); // Windows display
+                // Keep as path with backslashes; host normalizes
+              }
+            } catch {
+              /* keep s */
+            }
+            // Windows path C:\... or UNC \\server\share
+            if (
+              /^[A-Za-z]:[\\/]/.test(s) ||
+              /^\\\\/.test(s) ||
+              s.indexOf("/") >= 0 ||
+              s.indexOf("\\") >= 0
+            ) {
+              out.push(s);
+            }
           }
         }
         return out;
       }
 
-      function uriPaths(dt) {
-        if (!dt || !dt.getData) return [];
-        let raw = "";
-        try {
-          raw = dt.getData("text/uri-list") || dt.getData("text/plain") || "";
-        } catch {
-          raw = "";
-        }
-        return raw
-          .split(/\r?\n/)
-          .map((s) => s.trim())
-          .filter((s) => s && !s.startsWith("#"))
-          .map((s) => {
-            try {
-              if (/^file:/i.test(s)) {
-                const u = new URL(s);
-                let p = decodeURIComponent(u.pathname || "");
-                // Windows: /C:/... → C:/...
-                if (/^\/[A-Za-z]:\//.test(p)) p = p.slice(1);
-                return p;
-              }
-            } catch {
-              /* keep */
-            }
-            return s;
-          })
-          .filter(Boolean);
-      }
-
       function flashErr(msg) {
+        if (typeof toast === "function") {
+          toast(msg);
+          return;
+        }
         if (!els.input) return;
         const prev = els.input.placeholder;
         els.input.placeholder = msg;
@@ -504,27 +580,39 @@
         dragDepth = 0;
         setDropActive(false);
         const dt = e.dataTransfer;
-        const files = collectFiles(dt);
+        if (!dt) return;
+
+        const { files, paths } = collectDropPayload(dt);
+
+        // Prefer host path read (reliable for Explorer on Windows/Electron)
+        if (paths.length) {
+          post({ type: "attachFromPaths", paths });
+          els.input?.focus();
+          // Also try File blobs if any are readable (mixed drops)
+          if (files.length) {
+            const err = await attach.addFiles(files, false);
+            if (err) flashErr(err);
+          }
+          return;
+        }
+
         if (files.length) {
           const err = await attach.addFiles(files, false);
           if (err) flashErr(err);
           els.input?.focus();
           return;
         }
-        // Fallback: file:// URIs (IDE explorer / some OS drops)
-        const paths = uriPaths(dt);
-        if (paths.length) {
-          post({ type: "attachFromPaths", paths });
-          els.input?.focus();
-        }
+
+        flashErr("Could not read dropped files — try the + or image button");
       }
 
-      // Capture-phase on document so VS Code doesn't swallow dragover
+      // Capture phase on document — must cover whole webview for Explorer drops
       document.addEventListener(
         "dragenter",
         (e) => {
-          if (!pointInComposer(e.clientX, e.clientY)) return;
+          if (!isFileDrag(e.dataTransfer)) return;
           e.preventDefault();
+          e.stopPropagation();
           dragDepth++;
           setDropActive(true);
           if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
@@ -534,14 +622,8 @@
       document.addEventListener(
         "dragover",
         (e) => {
-          if (!pointInComposer(e.clientX, e.clientY)) {
-            if (dragDepth > 0) {
-              dragDepth = 0;
-              setDropActive(false);
-            }
-            return;
-          }
-          // Critical: without this, drop never fires in Electron webviews
+          if (!isFileDrag(e.dataTransfer)) return;
+          // Critical: without preventDefault, drop never fires in Electron webviews
           e.preventDefault();
           e.stopPropagation();
           if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
@@ -552,22 +634,59 @@
       document.addEventListener(
         "dragleave",
         (e) => {
-          // Only clear when leaving the webview / composer
-          if (!pointInComposer(e.clientX, e.clientY)) {
-            dragDepth = 0;
-            setDropActive(false);
+          if (!isFileDrag(e.dataTransfer) && dragDepth === 0) return;
+          // relatedTarget null often means left the webview
+          const rel = e.relatedTarget;
+          if (rel && dropRoot && dropRoot.contains(/** @type {Node} */ (rel))) {
+            return;
           }
+          dragDepth = Math.max(0, dragDepth - 1);
+          if (dragDepth === 0) setDropActive(false);
         },
         true
       );
       document.addEventListener(
         "drop",
         (e) => {
-          if (!pointInComposer(e.clientX, e.clientY)) return;
+          if (!isFileDrag(e.dataTransfer) && !(e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length)) {
+            // Still try — Explorer may not expose types until drop
+            if (!e.dataTransfer) return;
+          }
+          e.preventDefault();
+          e.stopPropagation();
           void handleDrop(e);
         },
         true
       );
+    }
+
+    /**
+     * Run a slash (or freeform) as a user turn — used by Settings → Extensions.
+     * @param {string} text
+     */
+    function runSlash(text) {
+      const t = String(text || "").trim();
+      if (!t) return;
+      // Local-only host commands never hit the agent
+      if (t.startsWith("/") && tryHostCommand(t)) {
+        return;
+      }
+      if (busy) {
+        promptQueue.enqueue({
+          text: t,
+          attachments: [],
+          mentions: [],
+          chipMeta: [],
+        });
+        toast("Queued " + t);
+        return;
+      }
+      dispatchPrompt({
+        text: t,
+        attachments: [],
+        mentions: [],
+        chipMeta: [],
+      });
     }
 
     return {
@@ -578,6 +697,7 @@
       setBusy,
       isBusy,
       tryHostCommand,
+      runSlash,
       toast,
       autoSize,
       clearComposer,

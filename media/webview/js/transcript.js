@@ -21,6 +21,36 @@
       this.active = null;
       /** @type {HTMLElement|null} */
       this._compactEl = null;
+      /** When false, streaming tokens do not force-scroll the transcript */
+      this.scrollWithStream = true;
+      /** User has scrolled up — pause follow until they send or scroll to bottom */
+      this._userPinned = false;
+      this._bindScrollGuard();
+    }
+
+    /**
+     * @param {boolean} on
+     */
+    setScrollWithStream(on) {
+      this.scrollWithStream = on !== false;
+      if (this.scrollWithStream) {
+        this._userPinned = false;
+      }
+    }
+
+    _bindScrollGuard() {
+      if (!this.root || this.root._warpScrollBound) return;
+      this.root._warpScrollBound = true;
+      this.root.addEventListener(
+        "scroll",
+        () => {
+          const el = this.root;
+          const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+          // More than ~48px from bottom → user is reading up
+          this._userPinned = dist > 48;
+        },
+        { passive: true }
+      );
     }
 
     isEmpty() {
@@ -58,7 +88,6 @@
         (info && info.reason === "manual" ? "manual" : "auto") +
         pct +
         "</span></div>";
-      // force orange state on the wrap
       const wrap = el.querySelector(".agent-think-wrap");
       if (wrap) wrap.dataset.state = "compacting";
       this.root.appendChild(el);
@@ -73,8 +102,7 @@
      */
     endCompact(silent, info) {
       const el =
-        this._compactEl ||
-        this.root.querySelector("#compact-status");
+        this._compactEl || this.root.querySelector("#compact-status");
       this._compactEl = null;
       if (!el) return;
       if (silent) {
@@ -107,8 +135,7 @@
 
     failCompact(message) {
       const el =
-        this._compactEl ||
-        this.root.querySelector("#compact-status");
+        this._compactEl || this.root.querySelector("#compact-status");
       this._compactEl = null;
       if (!el) return;
       el.classList.remove("is-running");
@@ -128,6 +155,8 @@
      */
     beginTurn(userText, attachments) {
       this.endActiveTimers();
+      // New send always jumps to bottom so the user sees their prompt
+      this._userPinned = false;
       const userEl = W.cards.createUserCard(userText, attachments);
       this.root.appendChild(userEl);
 
@@ -145,7 +174,7 @@
       // Always show thinking UI immediately (don't wait for first ACP chunk)
       this.ensureThinking();
       this._notifyEmpty();
-      this.scrollToBottom();
+      this.scrollToBottom({ force: true });
     }
 
     ensureThinking() {
@@ -246,7 +275,6 @@
     endTurn() {
       const a = this.active;
       if (a && a.thinkEl && !a.thoughtSettled) {
-        // No message tokens — still settle think line if we showed it
         this.completeThought();
       }
       this.endActiveTimers();
@@ -262,9 +290,20 @@
       this.scrollToBottom();
     }
 
-    scrollToBottom() {
+    /**
+     * @param {{ force?: boolean }} [opts]
+     */
+    scrollToBottom(opts) {
+      const force = !!(opts && opts.force);
+      // Respect Settings → Scroll with stream, and user scroll-up pin
+      if (!force) {
+        if (this.scrollWithStream === false) return;
+        if (this._userPinned) return;
+      }
       requestAnimationFrame(() => {
+        if (!this.root) return;
         this.root.scrollTop = this.root.scrollHeight;
+        this._userPinned = false;
       });
     }
 

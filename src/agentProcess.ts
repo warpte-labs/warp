@@ -8,6 +8,14 @@ import {
   type PromptAttachment,
 } from "./acpClient";
 import { getAuthStatus } from "./auth";
+import {
+  type PermissionMode,
+  getAutoCompactPercent,
+  getMockMode,
+  getPermissionMode as readPermissionMode,
+  setPermissionMode as persistPermissionMode,
+} from "./config";
+import { confirmEnableYolo } from "./security/permissions";
 
 /**
  * Chat backend for Warp.
@@ -21,24 +29,23 @@ import { getAuthStatus } from "./auth";
  *   context  ContextUsage
  *   compact  { phase: start|end|error, ... }
  *   commands { commands: AvailableCommand[] }
- *   permissionMode { alwaysApprove: boolean }
+ *   permissionMode { permissionMode, alwaysApprove }
  *   status | error | stderr | ready
  */
 export class AgentProcess extends EventEmitter implements vscode.Disposable {
   private readonly acp = new AcpClient();
   private wired = false;
+  private permissionMode: PermissionMode = "ask";
+  private turnActive = false;
+  private autoCompactBusy = false;
+  private lastAutoCompactAt = 0;
 
   constructor() {
     super();
     // Seed permission mode from settings before first spawn
-    this.acp.setAlwaysApprove(this.readAlwaysApproveSetting());
+    this.permissionMode = readPermissionMode();
+    this.acp.setPermissionMode(this.permissionMode);
     this.wireAcp();
-  }
-
-  private readAlwaysApproveSetting(): boolean {
-    return vscode.workspace
-      .getConfiguration("warp")
-      .get<boolean>("alwaysApprove", false);
   }
 
   private wireAcp(): void {
@@ -54,12 +61,16 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
     this.acp.on("error", (t: string) => this.emit("error", t));
     this.acp.on("ready", (p: unknown) => this.emit("ready", p));
     this.acp.on("models", (p: ModelState) => this.emit("models", p));
-    this.acp.on("context", (p: ContextUsage) => this.emit("context", p));
+    this.acp.on("context", (p: ContextUsage) => {
+      this.emit("context", p);
+      // Only auto-compact between turns (mid-stream would fight the agent)
+      if (!this.turnActive) {
+        void this.maybeAutoCompact();
+      }
+    });
     this.acp.on("compact", (p: unknown) => this.emit("compact", p));
     this.acp.on("commands", (p: unknown) => this.emit("commands", p));
-    this.acp.on("permissionMode", (p: unknown) =>
-      this.emit("permissionMode", p)
-    );
+    // Permission mode is owned by AgentProcess (not acp spawn noise).
   }
 
   getModelState(): ModelState {
@@ -75,48 +86,104 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
   }
 
   getAlwaysApprove(): boolean {
-    return this.acp.getAlwaysApprove();
+    return this.permissionMode === "yolo";
+  }
+
+  getPermissionMode(): PermissionMode {
+    return this.permissionMode;
   }
 
   getSessionId(): string | null {
     return this.acp.getSessionId();
   }
 
+  private emitPermissionMode(): void {
+    this.emit("permissionMode", {
+      permissionMode: this.permissionMode,
+      alwaysApprove: this.permissionMode === "yolo",
+    });
+  }
+
   /**
-   * Toggle YOLO tool approvals. Updates settings + restarts the agent process.
+   * Set ask | auto | yolo. Confirm before enabling YOLO.
+   *
+   * Grok mapping:
+   *  - ask  → prompt every tool (ACP session/request_permission → QuickPick)
+   *  - auto → Warp allows safe/read tools; writes/shell still prompt
+   *           (same process as ask — no restart; matches Grok `/auto` spirit)
+   *  - yolo → agent --always-approve (restart required when flag flips)
+   *
+   * Only YOLO changes spawn flags. Restarting for ask↔auto caused
+   * "Agent process exited" when the old process exit raced the new session.
    */
-  async setAlwaysApprove(on: boolean): Promise<boolean> {
-    const next = !!on;
-    this.acp.setAlwaysApprove(next);
+  async setPermissionMode(mode: PermissionMode): Promise<PermissionMode> {
+    const next: PermissionMode =
+      mode === "auto" || mode === "yolo" || mode === "ask" ? mode : "ask";
+    if (next === this.permissionMode) {
+      this.emitPermissionMode();
+      return this.permissionMode;
+    }
+    if (next === "yolo" && this.permissionMode !== "yolo") {
+      const ok = await confirmEnableYolo();
+      if (!ok) {
+        this.emitPermissionMode();
+        return this.permissionMode;
+      }
+    }
+    const prev = this.permissionMode;
+    this.permissionMode = next;
+    this.acp.setPermissionMode(next);
     try {
-      await vscode.workspace
-        .getConfiguration("warp")
-        .update("alwaysApprove", next, vscode.ConfigurationTarget.Global);
+      await persistPermissionMode(next);
     } catch {
       /* ignore settings write failures */
     }
-    this.emit("permissionMode", { alwaysApprove: next });
-    if (this.mockMode()) {
-      this.emit("status", next ? "Always-approve on (mock)" : "Ask mode (mock)");
+    this.emitPermissionMode();
+
+    const labels: Record<PermissionMode, string> = {
+      ask: "Ask",
+      auto: "Auto",
+      yolo: "Yolo",
+    };
+    const label = labels[next];
+
+    // Only --always-approve (yolo) changes the process argv
+    const needRestart = (prev === "yolo") !== (next === "yolo");
+    if (!needRestart) {
+      this.emit("status", `${label} mode`);
       return next;
     }
-    // Restart so spawn args pick up the flag
+    if (this.mockMode()) {
+      this.emit("status", `${label} mode (mock)`);
+      return next;
+    }
     this.acp.stop();
     const auth = getAuthStatus();
     if (auth.signedIn) {
-      await this.acp.ensureSession();
+      try {
+        await this.acp.ensureSession();
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e);
+        // Don't leave UI thinking yolo/ask flipped if restart failed
+        this.emit("error", `Agent restart failed: ${message}`);
+        this.emitPermissionMode();
+        throw e;
+      }
     }
-    this.emit(
-      "status",
-      next ? "Always-approve on — agent restarted" : "Ask mode — agent restarted"
-    );
+    // Re-assert after session start so UI never snaps back to ask
+    this.emitPermissionMode();
+    this.emit("status", `${label} mode — agent restarted`);
     return next;
   }
 
+  /** @deprecated prefer setPermissionMode */
+  async setAlwaysApprove(on: boolean): Promise<boolean> {
+    const mode = await this.setPermissionMode(on ? "yolo" : "ask");
+    return mode === "yolo";
+  }
+
   private mockMode(): boolean {
-    return vscode.workspace
-      .getConfiguration("warp")
-      .get<boolean>("mockMode", false);
+    return getMockMode();
   }
 
   async ensureStarted(): Promise<void> {
@@ -249,13 +316,16 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
     text: string,
     attachments?: PromptAttachment[]
   ): Promise<void> {
+    this.turnActive = true;
     this.emit("turn", { phase: "start" });
 
     if (this.mockMode()) {
       try {
         await this.runMockTurn();
       } finally {
+        this.turnActive = false;
         this.emit("turn", { phase: "end" });
+        void this.maybeAutoCompact();
       }
       return;
     }
@@ -263,12 +333,48 @@ export class AgentProcess extends EventEmitter implements vscode.Disposable {
     try {
       await this.ensureStarted();
       await this.acp.prompt(text, attachments);
+      this.turnActive = false;
       this.emit("turn", { phase: "end" });
+      void this.maybeAutoCompact();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       this.emit("error", message);
+      this.turnActive = false;
       this.emit("turn", { phase: "end" });
       throw e;
+    }
+  }
+
+  /**
+   * When context usage ≥ warp.autoCompactPercent (1–100), run /compact.
+   * 0 = disabled. Cooldown 45s so we don't loop.
+   */
+  private async maybeAutoCompact(): Promise<void> {
+    if (this.autoCompactBusy || this.turnActive || this.mockMode()) return;
+    const threshold = getAutoCompactPercent();
+    if (threshold <= 0) return;
+
+    const { usedTokens, totalTokens } = this.acp.getContextUsage();
+    if (!totalTokens || totalTokens <= 0) return;
+    const pct = Math.round((usedTokens / totalTokens) * 100);
+    if (pct < threshold) return;
+
+    const now = Date.now();
+    if (now - this.lastAutoCompactAt < 45_000) return;
+
+    this.autoCompactBusy = true;
+    this.lastAutoCompactAt = now;
+    try {
+      this.emit(
+        "status",
+        `Auto-compact at ${pct}% (threshold ${threshold}%)…`
+      );
+      await this.compact("auto — context threshold");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.emit("error", `Auto-compact failed: ${message}`);
+    } finally {
+      this.autoCompactBusy = false;
     }
   }
 

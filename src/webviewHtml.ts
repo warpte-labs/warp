@@ -12,7 +12,7 @@ export function buildChatHtml(
 ): string {
   const nonce = getNonce();
   // Cache-bust local assets so Cursor/VS Code picks up CSS/JS on each release
-  const assetV = "0.8.4";
+  const assetV = "0.9.25";
   const asset = (...parts: string[]) => {
     const uri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, ...parts)
@@ -21,6 +21,7 @@ export function buildChatHtml(
   };
   const cssUri = asset("media", "webview", "css", "chat.css");
   const markedUri = asset("media", "webview", "lib", "marked.umd.js");
+  const echartsUri = asset("media", "webview", "lib", "echarts.min.js");
   const script = (name: string) => asset("media", "webview", "js", name);
 
   const csp = [
@@ -50,6 +51,7 @@ export function buildChatHtml(
       <div class="chat-top-right">
         <button type="button" class="top-ico" id="btn-new-chat" title="New conversation" aria-label="New conversation">${iconNewChat()}</button>
         <button type="button" class="top-ico" id="btn-history" title="Chat history" aria-label="Chat history">${iconHistory()}</button>
+        <button type="button" class="top-ico" id="btn-settings" title="Settings" aria-label="Settings">${iconSettings()}</button>
       </div>
     </div>
 
@@ -87,16 +89,14 @@ export function buildChatHtml(
             <button type="button" class="ico" id="btn-slash" title="Slash command">${iconSlash()}</button>
             <button type="button" class="ico" id="btn-image" title="Attach image">${iconImage()}</button>
             <span class="spacer"></span>
-            <button type="button" class="meta meta-btn" id="meta" title="Model &amp; effort">Grok 4.5</button>
+            <button type="button" class="meta meta-btn mode-ask" id="meta" title="Model, effort &amp; tools">Grok 4.5 · High · ask</button>
             <button type="button" class="send" id="send" title="send">${iconSend()}</button>
           </div>
         </div>
         <div class="footer-row">
           <span class="ctx-usage" id="ctx-usage" title="Context window usage">—</span>
-          <button type="button" class="perm-chip yolo" id="perm-chip" title="Tool permission mode">yolo</button>
           <button type="button" id="btn-auth">Sign in</button>
         </div>
-        <div class="toast" id="toast" hidden></div>
       </div>
     </div>
 
@@ -112,6 +112,19 @@ export function buildChatHtml(
         <div class="history-detail-scroll" id="history-detail-body"></div>
       </div>
     </div>
+
+    <!-- Settings tab -->
+    <div class="settings-panel hidden" id="settings-panel" aria-hidden="true">
+      <div class="history-hd">
+        <button type="button" class="hist-back" id="btn-settings-back" title="Back">← Back</button>
+        <span class="history-title" id="settings-title">Settings</span>
+        <span class="hist-refresh" aria-hidden="true"></span>
+      </div>
+      <div class="settings-body" id="settings-list"></div>
+    </div>
+
+    <!-- Global toast — sits above chat + settings -->
+    <div class="toast" id="toast" hidden></div>
   </div>
 
   <input id="file-image" class="hidden-file" type="file" accept="image/*" multiple />
@@ -119,6 +132,8 @@ export function buildChatHtml(
 
   <script type="application/json" id="warp-tiles-data">${tilesJson}</script>
   <script nonce="${nonce}" src="${markedUri}"></script>
+  <script nonce="${nonce}" src="${echartsUri}"></script>
+  <script nonce="${nonce}" src="${script("util.js")}"></script>
   <script nonce="${nonce}" src="${script("dom.js")}"></script>
   <script nonce="${nonce}" src="${script("markdown.js")}"></script>
   <script nonce="${nonce}" src="${script("spinner.js")}"></script>
@@ -127,6 +142,8 @@ export function buildChatHtml(
   <script nonce="${nonce}" src="${script("transcript.js")}"></script>
   <script nonce="${nonce}" src="${script("hero.js")}"></script>
   <script nonce="${nonce}" src="${script("history.js")}"></script>
+  <script nonce="${nonce}" src="${script("usage.js")}"></script>
+  <script nonce="${nonce}" src="${script("settings.js")}"></script>
   <script nonce="${nonce}" src="${script("attach.js")}"></script>
   <script nonce="${nonce}" src="${script("mention.js")}"></script>
   <script nonce="${nonce}" src="${script("slash.js")}"></script>
@@ -163,6 +180,9 @@ function iconNewChat(): string {
 }
 function iconHistory(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="2"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 8v4l3 2"/></svg>`;
+}
+function iconSettings(): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z"/><path stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.51 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.51-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34H9a1.7 1.7 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.51 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87V9c.26.6.87 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1Z"/></svg>`;
 }
 function iconPlus(): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><path stroke="currentColor" stroke-linecap="round" stroke-width="2" d="M12 5v14M5 12h14"/></svg>`;

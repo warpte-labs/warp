@@ -21,6 +21,7 @@
    *   applyContext?: (msg: object) => void,
    *   applyPermissionMode?: (msg: object) => void,
    *   showToast?: (text: string) => void,
+   *   settingsUi?: object,
    * }} deps
    */
   function mount(deps) {
@@ -38,6 +39,7 @@
       applyContext,
       applyPermissionMode,
       showToast,
+      settingsUi,
     } = deps;
 
     function onMessage(msg) {
@@ -140,6 +142,22 @@
             showToast(msg.text || "");
           } else {
             composer?.toast?.(msg.text || "");
+          }
+          break;
+        case "settings":
+          settingsUi?.apply?.(msg);
+          break;
+        case "usage":
+          // Settings → Usage drill-in
+          settingsUi?.applyUsage?.(msg);
+          break;
+        case "closeSettings":
+          settingsUi?.setOpen?.(false);
+          break;
+        case "runSlash":
+          settingsUi?.setOpen?.(false);
+          if (typeof composer?.runSlash === "function") {
+            composer.runSlash(String(msg.text || ""));
           }
           break;
         default:

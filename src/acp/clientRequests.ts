@@ -5,6 +5,9 @@
 import * as fs from "fs";
 import * as path from "path";
 import { workspaceCwd } from "../paths";
+import { resolveSafePath, isPathInside } from "../security/paths";
+import { handlePermissionRequest } from "../security/permissions";
+import { getPermissionMode } from "../config";
 
 export type JsonRpcId = number | string;
 
@@ -21,7 +24,7 @@ export async function handleClientRequest(
 ): Promise<void> {
   try {
     if (method === "session/request_permission") {
-      handlePermission(id, params, io);
+      await handlePermissionRequest(id, params, io);
       return;
     }
     if (method === "fs/read_text_file") {
@@ -39,37 +42,17 @@ export async function handleClientRequest(
   }
 }
 
-function handlePermission(
-  id: JsonRpcId,
-  params: Record<string, unknown>,
-  io: RespondFns
-): void {
-  const options =
-    (params.options as Array<{
-      optionId: string;
-      name?: string;
-      kind?: string;
-    }>) || [];
-  const allow =
-    options.find((o) => /allow/i.test(o.kind || "")) ||
-    options.find((o) => /allow/i.test(o.name || "")) ||
-    options[0];
-  io.respond(id, {
-    outcome: allow
-      ? { outcome: "selected", optionId: allow.optionId }
-      : { outcome: "cancelled" },
-  });
-}
-
 function handleReadText(
   id: JsonRpcId,
   params: Record<string, unknown>,
   io: RespondFns
 ): void {
-  const filePath = String(params.path || "");
-  const abs = path.isAbsolute(filePath)
-    ? filePath
-    : path.join(workspaceCwd(), filePath);
+  const raw = String(params.path || "");
+  const abs = resolveAgentFsPath(raw);
+  if (!abs) {
+    io.respondError(id, "Invalid or disallowed path");
+    return;
+  }
   const content = fs.readFileSync(abs, "utf8");
   const limit = params.limit as number | undefined;
   const text =
@@ -84,12 +67,32 @@ function handleWriteText(
   params: Record<string, unknown>,
   io: RespondFns
 ): void {
-  const filePath = String(params.path || "");
-  const content = String(params.content ?? "");
-  const abs = path.isAbsolute(filePath)
-    ? filePath
-    : path.join(workspaceCwd(), filePath);
+  const raw = String(params.path || "");
+  const abs = resolveAgentFsPath(raw);
+  if (!abs) {
+    io.respondError(id, "Invalid or disallowed path");
+    return;
+  }
+  // Extra guard: when not YOLO, refuse writes outside workspace
+  if (getPermissionMode() !== "yolo") {
+    const cwd = workspaceCwd();
+    if (!isPathInside(abs, cwd)) {
+      io.respondError(
+        id,
+        "Write outside workspace blocked. Enable YOLO or work inside the open folder."
+      );
+      return;
+    }
+  }
   fs.mkdirSync(path.dirname(abs), { recursive: true });
-  fs.writeFileSync(abs, content, "utf8");
+  fs.writeFileSync(abs, String(params.content ?? ""), "utf8");
   io.respond(id, {});
+}
+
+/** Agent may use absolute paths; still normalize and reject empty. */
+function resolveAgentFsPath(raw: string): string | null {
+  return resolveSafePath(raw, {
+    mustBeUnderWorkspace: false,
+    allowAbsoluteOutside: true,
+  });
 }

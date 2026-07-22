@@ -1,11 +1,10 @@
 /**
  * Warp.modelSelector — model + reasoning effort picker.
  *
- * Effort UX (from mockup):
- *  - Thick track, white square knob
- *  - Blue / pink / green tier fills
- *  - Drag follows pointer; 50% threshold commits side
- *  - Color + sheen effect only after settle
+ * Effort UX (monochrome ultra-thin):
+ *  - 2px rail, white fill, round knob
+ *  - Drag follows pointer (INPUT_FOLLOW); 50% threshold commits
+ *  - Settle lerp + subtle sheen on land
  *  - session/set_model via post({ type: "setModel", ... })
  */
 (function (global) {
@@ -26,18 +25,39 @@
   const INPUT_FOLLOW = 0.92;
   const SETTLE_LERP = 0.2;
 
+  /** One-line hints under the effort rail — keep ~same length, no fluff. */
+  const SHORT_HINTS = {
+    none: "Minimal work",
+    minimal: "Minimal work",
+    low: "Fast and light",
+    medium: "Balanced depth",
+    high: "Deepest search",
+    xhigh: "Deepest search",
+    max: "Deepest search",
+  };
+
+  /** One-line tools hints under the perm strip. */
+  const PERM_HINTS = {
+    ask: "Confirm each tool",
+    auto: "Safe tools free",
+    yolo: "No tool prompts",
+  };
+
   /**
    * @param {{
    *   metaEl: HTMLElement | null,
    *   post: (msg: object) => void,
+   *   metaRow?: HTMLElement | null,
    * }} opts
    */
   function mount(opts) {
     const metaEl = opts.metaEl;
     const post = opts.post;
+    const metaRow = opts.metaRow || metaEl?.parentElement || null;
     if (!metaEl) {
       return {
         applyModels: function () {},
+        applyPermissionMode: function () {},
         setOpen: function () {},
         getState: function () {
           return null;
@@ -49,6 +69,9 @@
     let state = {
       currentModelId: "grok-4.5",
       reasoningEffort: "high",
+      /** @type {"ask"|"auto"|"yolo"} */
+      permissionMode: "ask",
+      alwaysApprove: false,
       availableModels: [
         {
           modelId: "grok-4.5",
@@ -60,20 +83,19 @@
               id: "low",
               value: "low",
               label: "Low Effort",
-              description: "Quick, fast implementations",
+              description: SHORT_HINTS.low,
             },
             {
               id: "medium",
               value: "medium",
               label: "Medium Effort",
-              description: "Balanced effort with standard implementation and testing",
+              description: SHORT_HINTS.medium,
             },
             {
               id: "high",
               value: "high",
               label: "High Effort",
-              description:
-                "Highest implementation quality with extensive reasoning",
+              description: SHORT_HINTS.high,
               default: true,
             },
           ],
@@ -85,15 +107,28 @@
     const pop = document.createElement("div");
     pop.className = "model-pop hidden";
     pop.setAttribute("role", "dialog");
-    pop.setAttribute("aria-label", "Model and effort");
+    pop.setAttribute("aria-label", "Model, effort, and tools");
     pop.setAttribute("aria-hidden", "true");
     document.body.appendChild(pop);
 
     let open = false;
     let ignoreOutsideUntil = 0;
+    /** Frozen screen position while pop is open — avoids jump when meta text width changes */
+    let popLock = null;
 
-    function positionPop() {
+    /**
+     * @param {{ force?: boolean }} [opts]
+     */
+    function positionPop(opts) {
       if (!open || !metaEl) return;
+      const force = !!(opts && opts.force);
+      // Keep dropdown glued while user swaps effort/mode (meta chip reflows)
+      if (popLock && !force) {
+        pop.style.width = popLock.w + "px";
+        pop.style.left = popLock.left + "px";
+        pop.style.top = popLock.top + "px";
+        return;
+      }
       const r = metaEl.getBoundingClientRect();
       const pad = 8;
       const gap = 6;
@@ -116,8 +151,11 @@
       if (top < pad) {
         top = r.bottom + gap;
       }
-      pop.style.left = Math.round(left) + "px";
-      pop.style.top = Math.round(top) + "px";
+      left = Math.round(left);
+      top = Math.round(top);
+      pop.style.left = left + "px";
+      pop.style.top = top + "px";
+      popLock = { left: left, top: top, w: w };
     }
 
     /** @type {Array<{id:string,value:string,label:string,description?:string,default?:boolean}>} */
@@ -201,15 +239,6 @@
       );
     }
 
-    function labelText() {
-      const m = currentModel();
-      const name = m?.name || state.currentModelId || "Model";
-      if (!m?.supportsReasoningEffort || !state.reasoningEffort) {
-        return name;
-      }
-      return name + " · " + shortEffortLabel(state.reasoningEffort, m);
-    }
-
     function shortEffortLabel(effort, model) {
       const list = sortedEfforts(model);
       const opt = list.find((e) => e.value === effort || e.id === effort);
@@ -218,14 +247,49 @@
       return effort.charAt(0).toUpperCase() + effort.slice(1);
     }
 
+    /**
+     * Stable meta chip: fixed-width slots for effort + mode so the bar
+     * (and the open dropdown above it) don't shift when swapping Low/Med/High.
+     */
     function paintMeta() {
-      metaEl.textContent = labelText();
-      metaEl.title = "Model & effort — click to change";
+      const mode =
+        state.permissionMode || (state.alwaysApprove ? "yolo" : "ask");
+      const m = currentModel();
+      const name = m?.name || state.currentModelId || "Model";
+      const effort =
+        m?.supportsReasoningEffort && state.reasoningEffort
+          ? shortEffortLabel(state.reasoningEffort, m)
+          : "";
+      const plain = [name]
+        .concat(effort ? [effort] : [])
+        .concat([mode])
+        .join(" · ");
+
+      metaEl.innerHTML =
+        '<span class="meta-name">' +
+        esc(name) +
+        "</span>" +
+        (effort
+          ? '<span class="meta-sep" aria-hidden="true"> · </span>' +
+            '<span class="meta-effort">' +
+            esc(effort) +
+            "</span>"
+          : "") +
+        '<span class="meta-sep" aria-hidden="true"> · </span>' +
+        '<span class="meta-mode">' +
+        esc(mode) +
+        "</span>";
+      metaEl.title =
+        plain + " — click to change (ask · auto · yolo)";
+      metaEl.setAttribute("aria-label", plain);
       metaEl.setAttribute("role", "button");
       metaEl.setAttribute("aria-haspopup", "dialog");
       metaEl.setAttribute("aria-expanded", open ? "true" : "false");
       metaEl.tabIndex = 0;
       metaEl.classList.add("meta-btn");
+      metaEl.classList.toggle("mode-yolo", mode === "yolo");
+      metaEl.classList.toggle("mode-auto", mode === "auto");
+      metaEl.classList.toggle("mode-ask", mode === "ask");
       if (metaEl.tagName === "BUTTON") {
         metaEl.type = "button";
       }
@@ -236,6 +300,17 @@
       if (v === "low" || v === "minimal" || v === "none") return "low";
       if (v === "medium") return "medium";
       return "high";
+    }
+
+    /** Prefer short local copy over long ACP descriptions. */
+    function shortHint(e) {
+      if (!e) return "";
+      const key = String(e.value || e.id || "").toLowerCase();
+      if (SHORT_HINTS[key]) return SHORT_HINTS[key];
+      const raw = String(e.description || "").trim();
+      if (!raw) return "";
+      // Hard cap: one short line if we ever get unknown tiers
+      return raw.length > 28 ? raw.slice(0, 25).trimEnd() + "…" : raw;
     }
 
     function render() {
@@ -297,19 +372,120 @@
           '%"></div>';
         html += "</div>";
         const curOpt = efforts[idx] || efforts[0];
-        if (curOpt?.description) {
-          html +=
-            '<div class="effort-hint" id="effort-hint">' +
-            esc(curOpt.description) +
-            "</div>";
-        } else {
-          html += '<div class="effort-hint" id="effort-hint"></div>';
-        }
+        const hintText = shortHint(curOpt);
+        html +=
+          '<div class="effort-hint" id="effort-hint">' +
+          esc(hintText) +
+          "</div>";
         html += "</div></div>";
       }
+
+      // Tools permission — ask / auto / yolo + sliding pill
+      const mode =
+        state.permissionMode || (state.alwaysApprove ? "yolo" : "ask");
+      html += '<div class="model-pop-sep"></div>';
+      html += '<div class="model-pop-pad">';
+      html += '<div class="model-pop-hd">Tools</div>';
+      html +=
+        '<div class="perm-mode" role="group" aria-label="Tool permission mode">';
+      html += '<div class="perm-mode-pill" id="perm-mode-pill"></div>';
+      html +=
+        '<button type="button" class="perm-mode-btn' +
+        (mode === "ask" ? " on" : "") +
+        '" data-perm="ask" title="Prompt before every tool">Ask</button>';
+      html +=
+        '<button type="button" class="perm-mode-btn' +
+        (mode === "auto" ? " on" : "") +
+        '" data-perm="auto" title="Allow safe/read tools; prompt for write/shell">Auto</button>';
+      html +=
+        '<button type="button" class="perm-mode-btn' +
+        (mode === "yolo" ? " on" : "") +
+        '" data-perm="yolo" title="Skip tool prompts (confirm required)">Yolo</button>';
+      html += "</div>";
+      html +=
+        '<div class="perm-mode-hint">' +
+        (PERM_HINTS[mode] || PERM_HINTS.ask) +
+        "</div>";
+      html += "</div>";
+
       pop.innerHTML = html;
       boundSlider = false;
       if (efforts.length) bindSlider();
+      bindPermMode();
+      // Place pill without animating on first paint
+      requestAnimationFrame(() => positionPermPill(true));
+    }
+
+    function positionPermPill(instant) {
+      const container = pop.querySelector(".perm-mode");
+      const pill = pop.querySelector("#perm-mode-pill");
+      if (!container || !pill) return;
+      const active = container.querySelector(".perm-mode-btn.on");
+      if (!active) return;
+      if (instant) {
+        pill.style.transition = "none";
+      }
+      const barRect = container.getBoundingClientRect();
+      const btnRect = active.getBoundingClientRect();
+      pill.style.width = btnRect.width + "px";
+      pill.style.left = btnRect.left - barRect.left + "px";
+      if (instant) {
+        void pill.offsetWidth;
+        pill.style.transition = "";
+      }
+    }
+
+    function paintPermMode(mode, opts) {
+      const instant = !!(opts && opts.instant);
+      const container = pop.querySelector(".perm-mode");
+      if (!container) return;
+      container.querySelectorAll(".perm-mode-btn").forEach((btn) => {
+        const p = btn.getAttribute("data-perm");
+        btn.classList.toggle("on", p === mode);
+      });
+      const hint = pop.querySelector(".perm-mode-hint");
+      if (hint) hint.textContent = PERM_HINTS[mode] || PERM_HINTS.ask;
+      positionPermPill(instant);
+    }
+
+    function bindPermMode() {
+      pop.querySelectorAll(".perm-mode-btn").forEach((btn) => {
+        btn.addEventListener("click", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const mode = btn.getAttribute("data-perm");
+          if (!mode || mode === state.permissionMode) return;
+          // Optimistic: slide pill immediately (usage-tab style)
+          state.permissionMode = mode;
+          state.alwaysApprove = mode === "yolo";
+          paintPermMode(mode);
+          paintMeta();
+          post({ type: "setPermissionMode", mode: mode });
+        });
+      });
+    }
+
+    function applyPermissionMode(msg) {
+      if (!msg || typeof msg !== "object") return;
+      const mode =
+        msg.permissionMode === "auto" ||
+        msg.permissionMode === "yolo" ||
+        msg.permissionMode === "ask"
+          ? msg.permissionMode
+          : msg.alwaysApprove
+            ? "yolo"
+            : "ask";
+      const prev = state.permissionMode;
+      state.permissionMode = mode;
+      state.alwaysApprove = mode === "yolo";
+      paintMeta();
+      if (!open) return;
+      // In-place update so the pill can animate (full re-render would snap)
+      if (pop.querySelector(".perm-mode")) {
+        paintPermMode(mode, { instant: prev === mode });
+      } else {
+        render();
+      }
     }
 
     function placeKnob(t) {
@@ -394,7 +570,7 @@
       });
 
       const hint = pop.querySelector("#effort-hint");
-      if (hint) hint.textContent = e.description || "";
+      if (hint) hint.textContent = shortHint(e);
 
       paintMeta();
 
@@ -566,13 +742,15 @@
       metaEl.setAttribute("aria-expanded", open ? "true" : "false");
       if (open) {
         ignoreOutsideUntil = Date.now() + 250;
+        popLock = null;
         render();
-        // After layout, pin drop-up to the Grok label
+        // After layout, pin drop-up once and freeze until close/resize
         requestAnimationFrame(() => {
-          positionPop();
-          requestAnimationFrame(positionPop);
+          positionPop({ force: true });
+          requestAnimationFrame(() => positionPop({ force: true }));
         });
       } else {
+        popLock = null;
         stopPhysics();
         dragging = false;
         settling = false;
@@ -606,7 +784,8 @@
       paintMeta();
       if (open) {
         render();
-        requestAnimationFrame(positionPop);
+        // Re-measure only after a full re-render (models list changed)
+        requestAnimationFrame(() => positionPop({ force: true }));
       }
     }
 
@@ -634,7 +813,12 @@
         if (!open) return;
         if (Date.now() < ignoreOutsideUntil) return;
         const t = ev.target;
-        if (t instanceof Node && (pop.contains(t) || metaEl.contains(t))) {
+        if (
+          t instanceof Node &&
+          (pop.contains(t) ||
+            metaEl.contains(t) ||
+            (metaRow && metaRow.contains(t)))
+        ) {
           return;
         }
         setOpen(false);
@@ -647,12 +831,16 @@
     });
 
     window.addEventListener("resize", () => {
-      if (open) positionPop();
+      if (open) {
+        positionPop({ force: true });
+        positionPermPill(true);
+      }
     });
 
     paintMeta();
     return {
       applyModels,
+      applyPermissionMode,
       setOpen,
       getState: () => state,
     };

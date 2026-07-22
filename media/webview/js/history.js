@@ -18,6 +18,7 @@
    *   btnBack: HTMLElement,
    *   btnRefresh: HTMLElement,
    *   post: (msg: object) => void,
+   *   onOpenChange?: (open: boolean) => void,
    * }} opts
    */
   function mount(opts) {
@@ -36,6 +37,9 @@
       if (open) {
         showList();
         requestList();
+      }
+      if (typeof opts.onOpenChange === "function") {
+        opts.onOpenChange(open);
       }
     }
 
@@ -184,9 +188,25 @@
       }
     });
 
+    function openSession(sessionId) {
+      if (!sessionId) return;
+      if (!state.open) {
+        state.open = true;
+        opts.root.classList.toggle("history-open", true);
+        opts.panel.classList.toggle("hidden", false);
+        opts.panel.setAttribute("aria-hidden", "false");
+        opts.btnOpen.classList.toggle("on", true);
+        if (typeof opts.onOpenChange === "function") {
+          opts.onOpenChange(true);
+        }
+      }
+      requestDetail(sessionId);
+    }
+
     return {
       setOpen,
       isOpen: () => state.open,
+      openSession,
       renderList,
       renderDetail,
       onError(text) {

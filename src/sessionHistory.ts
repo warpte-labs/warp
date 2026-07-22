@@ -21,6 +21,62 @@ export type HistoryMessage = {
 };
 
 /**
+ * Cheap session counts for Usage — summary.json only, no transcript previews.
+ * Avoids the expensive firstUserPreview() walks used by listLocalSessions.
+ */
+export function summarizeLocalSessions(): {
+  sessions: number;
+  messages: number;
+} {
+  const root = path.join(grokHome(), "sessions");
+  let sessions = 0;
+  let messages = 0;
+  if (!fs.existsSync(root)) {
+    return { sessions: 0, messages: 0 };
+  }
+  let groups: string[] = [];
+  try {
+    groups = fs.readdirSync(root);
+  } catch {
+    return { sessions: 0, messages: 0 };
+  }
+  for (const group of groups) {
+    if (group === "session_search.sqlite" || group.startsWith(".")) continue;
+    const groupPath = path.join(root, group);
+    let st: fs.Stats;
+    try {
+      st = fs.statSync(groupPath);
+    } catch {
+      continue;
+    }
+    if (!st.isDirectory()) continue;
+    let sessionDirs: string[] = [];
+    try {
+      sessionDirs = fs.readdirSync(groupPath);
+    } catch {
+      continue;
+    }
+    for (const sid of sessionDirs) {
+      if (sid === "prompt_history.jsonl" || sid.startsWith(".")) continue;
+      const summaryPath = path.join(groupPath, sid, "summary.json");
+      try {
+        if (!fs.existsSync(summaryPath)) continue;
+        const raw = JSON.parse(fs.readFileSync(summaryPath, "utf8")) as {
+          num_chat_messages?: number;
+          num_messages?: number;
+        };
+        sessions += 1;
+        messages +=
+          raw.num_chat_messages ?? raw.num_messages ?? 0;
+      } catch {
+        /* skip */
+      }
+    }
+  }
+  return { sessions, messages };
+}
+
+/**
  * List Grok sessions from ~/.grok/sessions (all chats on this machine).
  * Workspace sessions sort first, then by last activity.
  */

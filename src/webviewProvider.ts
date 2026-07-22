@@ -68,12 +68,24 @@ export class WarpViewProvider implements vscode.WebviewViewProvider {
       this.log?.(`[acp] commands ${n}`);
       this.post({ type: "commands", commands: p?.commands || [] });
     });
-    this.agent.on("permissionMode", (p: { alwaysApprove?: boolean }) => {
-      this.post({
-        type: "permissionMode",
-        alwaysApprove: !!p?.alwaysApprove,
-      });
-    });
+    this.agent.on(
+      "permissionMode",
+      (p: { alwaysApprove?: boolean; permissionMode?: string }) => {
+        const mode =
+          p?.permissionMode === "auto" ||
+          p?.permissionMode === "yolo" ||
+          p?.permissionMode === "ask"
+            ? p.permissionMode
+            : p?.alwaysApprove
+              ? "yolo"
+              : "ask";
+        this.post({
+          type: "permissionMode",
+          permissionMode: mode,
+          alwaysApprove: mode === "yolo",
+        });
+      }
+    );
     this.agent.on("ready", (p: unknown) => {
       const rec = p && typeof p === "object" ? (p as Record<string, unknown>) : {};
       if (rec.models && typeof rec.models === "object") {
@@ -87,6 +99,7 @@ export class WarpViewProvider implements vscode.WebviewViewProvider {
       }
       this.post({
         type: "permissionMode",
+        permissionMode: this.agent.getPermissionMode(),
         alwaysApprove: this.agent.getAlwaysApprove(),
       });
     });

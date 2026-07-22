@@ -61,7 +61,8 @@ export class AcpClient extends EventEmitter {
   private modelState: ModelState = emptyModelState();
   private contextUsage: ContextUsage = { usedTokens: 0, totalTokens: 500_000 };
   private availableCommands: AvailableCommand[] = [];
-  private alwaysApprove = true;
+  /** Warp tool policy — applied on next spawn. */
+  private permissionMode: "ask" | "auto" | "yolo" = "ask";
 
   get connected(): boolean {
     return this.child !== null && !this.child.killed && this.sessionId !== null;
@@ -84,12 +85,41 @@ export class AcpClient extends EventEmitter {
   }
 
   getAlwaysApprove(): boolean {
-    return this.alwaysApprove;
+    return this.permissionMode === "yolo";
   }
 
-  /** Used on next spawn (call stop + ensureSession to apply). */
+  getPermissionMode(): "ask" | "auto" | "yolo" {
+    return this.permissionMode;
+  }
+
+  /**
+   * Used on next spawn when YOLO flag changes.
+   * Maps to Grok CLI:
+   *  - yolo → agent --always-approve stdio
+   *  - ask / auto → agent stdio
+   *
+   * Auto is enforced in Warp (session/request_permission + safe-tool allow),
+   * matching Grok `/auto` semantics without a process restart. Restarting for
+   * auto caused "Agent process exited" races (stale exit handlers).
+   */
+  setPermissionMode(mode: "ask" | "auto" | "yolo"): void {
+    this.permissionMode =
+      mode === "auto" || mode === "yolo" || mode === "ask" ? mode : "ask";
+  }
+
+  /** @deprecated prefer setPermissionMode */
   setAlwaysApprove(on: boolean): void {
-    this.alwaysApprove = !!on;
+    this.permissionMode = on ? "yolo" : "ask";
+  }
+
+  /** Build `grok …` argv for ACP stdio with the current permission policy. */
+  private agentStdioArgs(): string[] {
+    if (this.permissionMode === "yolo") {
+      // Same as --permission-mode bypassPermissions / --yolo
+      return ["agent", "--always-approve", "stdio"];
+    }
+    // ask + auto share the same process flags; auto is client-side policy
+    return ["agent", "stdio"];
   }
 
   private emitContext(): void {
@@ -257,13 +287,16 @@ export class AcpClient extends EventEmitter {
     this.modelState = emptyModelState();
     this.contextUsage = { usedTokens: 0, totalTokens: 500_000 };
     this.availableCommands = [];
-    if (this.child) {
+    // Clear current child *before* kill so the async exit handler does not
+    // treat a superseded process as live and wipe a newly spawned session.
+    const prev = this.child;
+    this.child = null;
+    if (prev) {
       try {
-        this.child.kill();
+        prev.kill();
       } catch {
         /* ignore */
       }
-      this.child = null;
     }
   }
 
@@ -280,19 +313,20 @@ export class AcpClient extends EventEmitter {
       throw new Error(missingBinaryHelp(binary));
     }
     const cwd = workspaceCwd();
-    const args = this.alwaysApprove
-      ? ["agent", "--always-approve", "stdio"]
-      : ["agent", "stdio"];
+    const args = this.agentStdioArgs();
     this.emit("status", `Starting ${binary} ${args.join(" ")}…`);
-    this.emit("permissionMode", { alwaysApprove: this.alwaysApprove });
+    // Do not emit permissionMode here — AgentProcess owns the UI source of
+    // truth. Emitting ask when YOLO is off used to clobber "auto" after restart.
 
+    let child: ChildProcessWithoutNullStreams;
     try {
-      this.child = spawn(binary, args, {
+      child = spawn(binary, args, {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
         env: { ...process.env },
         windowsHide: true,
       });
+      this.child = child;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (/ENOENT|not found|spawn/i.test(msg)) {
@@ -301,7 +335,8 @@ export class AcpClient extends EventEmitter {
       throw new Error(`Failed to spawn agent: ${msg}`);
     }
 
-    this.child.stdout.on("data", (chunk: Buffer) => {
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (this.child !== child) return;
       this.buf += chunk.toString("utf8");
       let nl: number;
       while ((nl = this.buf.indexOf("\n")) >= 0) {
@@ -313,14 +348,17 @@ export class AcpClient extends EventEmitter {
       }
     });
 
-    this.child.stderr.on("data", (chunk: Buffer) => {
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (this.child !== child) return;
       const text = chunk.toString("utf8").trim();
       if (text) {
         this.emit("stderr", text);
       }
     });
 
-    this.child.on("error", (err) => {
+    child.on("error", (err) => {
+      // Ignore errors from a process we already replaced/stopped
+      if (this.child !== child) return;
       // Async spawn failures (ENOENT) often land here instead of throw
       const msg = /ENOENT/i.test(err.message)
         ? missingBinaryHelp(binary)
@@ -330,7 +368,12 @@ export class AcpClient extends EventEmitter {
       this.sessionId = null;
     });
 
-    this.child.on("exit", (code, signal) => {
+    child.on("exit", (code, signal) => {
+      // Critical: a killed previous agent exits *after* a new one may have
+      // started. Only tear down if this exit is still the active child.
+      if (this.child !== child) {
+        return;
+      }
       this.emit(
         "status",
         `Agent exited (code=${code ?? "?"}, signal=${signal ?? "none"})`

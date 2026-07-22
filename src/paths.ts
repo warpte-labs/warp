@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { execSync } from "child_process";
 import * as vscode from "vscode";
+import { getBinaryPathSetting, getDefaultCwdSetting } from "./config";
 
 /** Grok home directory (~/.grok or %USERPROFILE%\.grok). */
 export function grokHome(): string {
@@ -24,10 +25,7 @@ export function authJsonPath(): string {
  * 4. Fallback bare name `grok` (lets spawn report a clear ENOENT)
  */
 export function resolveBinary(): string {
-  const configured = vscode.workspace
-    .getConfiguration("warp")
-    .get<string>("binaryPath", "")
-    ?.trim();
+  const configured = getBinaryPathSetting();
   if (configured) {
     if (fs.existsSync(configured) || !path.isAbsolute(configured)) {
       return configured;
@@ -141,10 +139,7 @@ export function workspaceCwd(): string {
   }
 
   // Optional override for empty-window / no-folder sessions
-  const configured = vscode.workspace
-    .getConfiguration("warp")
-    .get<string>("defaultCwd", "")
-    ?.trim();
+  const configured = getDefaultCwdSetting();
   if (configured) {
     try {
       fs.mkdirSync(configured, { recursive: true });
