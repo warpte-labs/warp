@@ -17,16 +17,24 @@
 
   const els = W.dom.getEls();
   const tiles = W.dom.parseTiles(els.tilesData);
-  const heroState = { played: false };
+  /** played = first intro done; forceReplay set when chat has content then clears */
+  const heroState = { played: false, forceReplay: false };
+  const gateHeroState = { played: false, forceReplay: false };
 
   W.hero.mount(els.hero, tiles);
+  if (els.heroGate) {
+    W.hero.mount(els.heroGate, tiles);
+  }
 
   const transcript = new W.Transcript(els.messages, {
     onEmptyChange(empty) {
+      // Only animate chat hero when signed in
+      if (els.root && els.root.classList.contains("is-signed-out")) {
+        return;
+      }
       W.hero.setEmpty(els.hero, empty, tiles, heroState);
     },
   });
-  W.hero.setEmpty(els.hero, true, tiles, heroState);
 
   const historyUi = W.history.mount({
     root: els.root,
@@ -122,15 +130,50 @@
     historyUi,
     mentionedPaths,
     showToast,
+    onNewChat(info) {
+      // New chat while already empty: transcript.clear won't fire empty-change
+      if (info && info.wasEmpty && W.hero.replayIntro) {
+        W.hero.replayIntro(els.hero, tiles, heroState);
+      }
+    },
   });
 
   let signedIn = false;
   let alwaysApprove = true;
+  let gateIntroPlayed = false;
 
+  /**
+   * Signed-out: mockup 08 — no chrome, small W, tagline, “Continue with Grok”.
+   * Signed-in: full chat UI.
+   */
   function applyAuth(msg) {
-    signedIn = !!msg.signedIn;
+    const next = !!msg.signedIn;
+    const changed = next !== signedIn;
+    signedIn = next;
     if (els.btnAuth) {
       els.btnAuth.textContent = signedIn ? "Sign out" : "Sign in";
+    }
+    if (els.root) {
+      els.root.classList.toggle("is-signed-out", !signedIn);
+    }
+    if (!signedIn) {
+      // Close history if open
+      historyUi?.setOpen?.(false);
+      // Spiral on gate W (replay when returning to signed-out)
+      if (els.heroGate && W.hero.replayIntro) {
+        if (!gateIntroPlayed || changed) {
+          gateIntroPlayed = true;
+          W.hero.replayIntro(els.heroGate, tiles, gateHeroState);
+        }
+      } else if (els.heroGate) {
+        W.hero.setEmpty(els.heroGate, true, tiles, gateHeroState);
+      }
+    } else {
+      // Enter signed-in empty state with chat hero
+      if (transcript.isEmpty()) {
+        heroState.forceReplay = true;
+        W.hero.setEmpty(els.hero, true, tiles, heroState);
+      }
     }
   }
 
@@ -185,6 +228,10 @@
     post({ type: signedIn ? "signOut" : "signIn" });
   });
 
+  els.btnContinueGrok?.addEventListener("click", () => {
+    post({ type: "signIn" });
+  });
+
   els.ctxUsage?.addEventListener("click", (e) => {
     if (e.shiftKey) {
       // Run agent /context as a prompt
@@ -216,5 +263,13 @@
 
   composer.bind();
   bridge.bind();
+  // Start in signed-out gate until host pushes auth
+  if (els.root) {
+    els.root.classList.add("is-signed-out");
+  }
+  if (els.heroGate && W.hero.replayIntro) {
+    gateIntroPlayed = true;
+    W.hero.replayIntro(els.heroGate, tiles, gateHeroState);
+  }
   post({ type: "ready" });
 })();

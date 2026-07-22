@@ -34,43 +34,31 @@ Warp does **not** embed the agent binary. Install Grok Build (or your fork) firs
 
 ## Install
 
-### From VSIX (any machine)
+### Install (public download — no local files required)
 
-1. Download `warp-0.8.1.vsix` (or build one — see below).
-2. In VS Code / Cursor:  
-   **Extensions** → `…` → **Install from VSIX…** → pick the file.  
-   Or CLI:
+**One command (downloads the VSIX from GitHub Releases):**
 
 ```bash
-code --install-extension warp-0.8.1.vsix
-# Cursor:
-cursor --install-extension warp-0.8.1.vsix
+code --install-extension https://github.com/weightliftgurutools/warp/releases/latest/download/warp-0.8.4.vsix
 ```
 
-3. Reload the window.
-4. Open the **Warp** view in the **secondary side bar** (right), or run **Warp: Open Chat**.
-5. **Sign In** with your Grok account.
+```bash
+cursor --install-extension https://github.com/weightliftgurutools/warp/releases/latest/download/warp-0.8.4.vsix
+```
 
-### From source
+**Or** download from the [latest release](https://github.com/weightliftgurutools/warp/releases/latest) → Extensions → **Install from VSIX…**
+
+Then reload → open the project folder you want Grok to work in → **Warp: Open Chat** → **Continue with Grok**.
+
+### From source (developers only)
 
 ```bash
-git clone <this-repo>
-cd warp   # or grokfork project root
+git clone https://github.com/weightliftgurutools/warp.git
+cd warp
 npm install
 npm run compile
 npm run package
-# then Install from VSIX: warp-0.8.1.vsix
 ```
-
-### Marketplace / Open VSX
-
-When published, search for **“Warp Grok”** or install:
-
-```text
-ext install warp-agent.warp
-```
-
-(Publisher id: `warp-agent`. Change `publisher` in `package.json` if you publish under your own namespace.)
 
 ## Quick start
 

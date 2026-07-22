@@ -2,10 +2,18 @@
   "name": "warp",
   "displayName": "Warp — Grok Sidebar Agent",
   "description": "Secondary-sidebar coding agent for VS Code & Cursor. Chat with Grok Build over ACP: tools, slash commands, model/effort, history, and OAuth.",
-  "version": "0.8.1",
+  "version": "0.8.4",
   "publisher": "warp-agent",
   "license": "MIT",
   "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/weightliftgurutools/warp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/weightliftgurutools/warp/issues"
+  },
+  "homepage": "https://github.com/weightliftgurutools/warp#readme",
   "galleryBanner": {
     "color": "#121212",
     "theme": "dark"
@@ -90,6 +98,11 @@
           "default": "",
           "markdownDescription": "Absolute path to the Grok / Grokfork binary that supports `agent stdio` (ACP). Leave empty to auto-detect (`grokfork`, `grok`, `~/.grok/bin/grok`, `~/bin/grokfork`)."
         },
+        "warp.defaultCwd": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Folder the agent uses when **no workspace folder** is open. Empty = `~/.warp/workspace` (clean sandbox). Does not override an open project folder."
+        },
         "warp.alwaysApprove": {
           "type": "boolean",
           "default": false,
@@ -107,7 +120,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package --allow-missing-repository --no-dependencies --baseContentUrl https://github.com/warp-agent/warp/raw/main --baseImagesUrl https://github.com/warp-agent/warp/raw/main",
+    "package": "vsce package --no-dependencies",
     "package:public": "npm run compile && npm run package",
     "sync:marked": "node -e \"require('fs').copyFileSync('node_modules/marked/lib/marked.umd.js','media/webview/lib/marked.umd.js')\""
   },

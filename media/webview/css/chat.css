@@ -58,6 +58,82 @@ button { cursor: pointer; }
   grid-template-rows: 1fr auto;
 }
 
+/* ── Signed-out gate (mockup 08: no chrome · small W · tagline · link) ── */
+.chat.is-signed-out {
+  grid-template-rows: 1fr;
+  padding-top: 0;
+}
+.chat.is-signed-out .chat-top,
+.chat.is-signed-out .chat-body,
+.chat.is-signed-out .history-panel {
+  display: none !important;
+}
+.chat.is-signed-out .auth-gate {
+  display: flex;
+}
+.auth-gate {
+  display: none;
+  grid-row: 1 / -1;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px 40px;
+}
+.auth-gate-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 280px;
+}
+.auth-gate .hero-gate {
+  position: relative;
+  inset: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+.auth-gate .hero-gate .hero-svg {
+  /* Smaller W (mockup no-chrome) */
+  width: min(200px, 72%);
+  max-height: none;
+  height: auto;
+  pointer-events: auto;
+}
+.auth-gate-tagline {
+  margin: 18px 0 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  text-align: center;
+  line-height: 1.45;
+  max-width: 240px;
+}
+.auth-gate-link {
+  margin-top: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: rgba(108, 108, 108, 0.55);
+  background: none;
+  border: 0;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+.auth-gate-link:hover {
+  color: var(--text-2);
+  text-decoration-color: var(--text-2);
+}
+
 .chat-top {
   display: flex;
   align-items: center;

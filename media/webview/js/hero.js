@@ -498,7 +498,7 @@
    * @param {HTMLElement} heroEl
    * @param {boolean} empty
    * @param {Array} tiles
-   * @param {{played:boolean}} state
+   * @param {{played?:boolean, forceReplay?:boolean}} [state]
    */
   function setEmpty(heroEl, empty, tiles, state) {
     if (!heroEl) {
@@ -507,10 +507,27 @@
     heroEl.classList.toggle("hidden", !empty);
     if (!empty) {
       stopStream();
+      // Next time we return to empty (new chat), replay spiral intro
+      if (state) {
+        state.forceReplay = true;
+      }
       return;
     }
-    if (state && !state.played) {
-      state.played = true;
+    const force = !!(state && state.forceReplay);
+    const first = !state || !state.played;
+    if (force || first) {
+      if (state) {
+        state.played = true;
+        state.forceReplay = false;
+      }
+      stopStream();
+      // Reset cores so spiral fade-in is visible every time
+      const cores = heroEl.querySelectorAll(".w-tile.core");
+      cores.forEach((el) => {
+        el.style.transition = "none";
+        el.style.opacity = "0";
+      });
+      void heroEl.offsetHeight;
       playSpiral(heroEl, tiles, () => {
         if (!heroEl.classList.contains("hidden")) {
           startStream(heroEl, tiles);
@@ -528,10 +545,27 @@
     }
   }
 
+  /**
+   * Force the spiral intro + stream (e.g. New chat while already empty).
+   * @param {HTMLElement} heroEl
+   * @param {Array} tiles
+   * @param {{played?:boolean, forceReplay?:boolean}} [state]
+   */
+  function replayIntro(heroEl, tiles, state) {
+    if (!heroEl) return;
+    if (state) {
+      state.forceReplay = true;
+      state.played = true;
+    }
+    heroEl.classList.remove("hidden");
+    setEmpty(heroEl, true, tiles, state || { played: true, forceReplay: true });
+  }
+
   W.hero = {
     mount: mount,
     playSpiral: playSpiral,
     setEmpty: setEmpty,
+    replayIntro: replayIntro,
     spiralOrder: spiralOrder,
     buildSvg: buildSvg,
     startStream: startStream,

@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as vscode from "vscode";
 import { spawn } from "child_process";
-import { authJsonPath, resolveBinary } from "./paths";
+import { authJsonPath, resolveBinary, workspaceCwd } from "./paths";
 
 export type AuthStatus = {
   signedIn: boolean;
@@ -53,7 +53,7 @@ export async function loginWithCli(
 
   const term = vscode.window.createTerminal({
     name: "Warp Login",
-    cwd: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    cwd: workspaceCwd(),
   });
   term.show(true);
   // Quote path if it has spaces

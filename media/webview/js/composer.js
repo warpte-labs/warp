@@ -19,6 +19,7 @@
    *   historyUi: object,
    *   mentionedPaths: Set<string>,
    *   showToast?: (text: string) => void,
+   *   onNewChat?: () => void,
    * }} ctx
    */
   function mount(ctx) {
@@ -34,6 +35,7 @@
       historyUi,
       mentionedPaths,
       showToast,
+      onNewChat,
     } = ctx;
 
     let busy = false;
@@ -314,6 +316,7 @@
       mention.close();
       slash?.close?.();
       promptQueue.clear();
+      const wasEmpty = transcript.isEmpty();
       transcript.clear();
       attach.clear();
       mentionedPaths.clear();
@@ -322,6 +325,10 @@
         els.input.value = "";
         autoSize();
         els.input.focus();
+      }
+      // Spiral W intro: setEmpty handles empty-after-content; if already empty, force replay
+      if (typeof onNewChat === "function") {
+        onNewChat({ wasEmpty: !!wasEmpty });
       }
       post({ type: "newChat" });
     }

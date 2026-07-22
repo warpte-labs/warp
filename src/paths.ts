@@ -126,10 +126,41 @@ function whichOnPath(names: string[]): string | null {
   return null;
 }
 
+/**
+ * Working directory for the Grok agent session.
+ *
+ * Prefer the open workspace folder. Never fall back to the extension install
+ * path or process.cwd() when that would make Grok “work inside” Warp’s own
+ * package (or an empty host cwd). Without a folder open, use a clean
+ * per-user sandbox under ~/.warp/workspace.
+ */
 export function workspaceCwd(): string {
-  return (
-    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd()
-  );
+  const folder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (folder && fs.existsSync(folder)) {
+    return folder;
+  }
+
+  // Optional override for empty-window / no-folder sessions
+  const configured = vscode.workspace
+    .getConfiguration("warp")
+    .get<string>("defaultCwd", "")
+    ?.trim();
+  if (configured) {
+    try {
+      fs.mkdirSync(configured, { recursive: true });
+    } catch {
+      /* use as-is */
+    }
+    return configured;
+  }
+
+  const sandbox = path.join(os.homedir(), ".warp", "workspace");
+  try {
+    fs.mkdirSync(sandbox, { recursive: true });
+  } catch {
+    /* ignore */
+  }
+  return sandbox;
 }
 
 /** Human help when the agent binary is missing. */

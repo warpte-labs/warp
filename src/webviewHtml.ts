@@ -12,7 +12,7 @@ export function buildChatHtml(
 ): string {
   const nonce = getNonce();
   // Cache-bust local assets so Cursor/VS Code picks up CSS/JS on each release
-  const assetV = "0.8.1";
+  const assetV = "0.8.4";
   const asset = (...parts: string[]) => {
     const uri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, ...parts)
@@ -44,12 +44,21 @@ export function buildChatHtml(
   <link rel="stylesheet" href="${cssUri}" />
 </head>
 <body>
-  <div class="chat">
-    <div class="chat-top">
+  <div class="chat is-signed-out" id="chat-root">
+    <div class="chat-top" id="chat-top">
       <span class="powered" id="powered">powered by grok</span>
       <div class="chat-top-right">
         <button type="button" class="top-ico" id="btn-new-chat" title="New conversation" aria-label="New conversation">${iconNewChat()}</button>
         <button type="button" class="top-ico" id="btn-history" title="Chat history" aria-label="Chat history">${iconHistory()}</button>
+      </div>
+    </div>
+
+    <!-- Signed-out gate: no chrome · smaller W · tagline · Continue with Grok -->
+    <div class="auth-gate" id="auth-gate" aria-label="Sign in">
+      <div class="auth-gate-stack">
+        <div class="hero hero-gate" id="hero-gate"></div>
+        <p class="auth-gate-tagline">Sign in to chat with Grok in the sidebar</p>
+        <button type="button" class="auth-gate-link" id="btn-continue-grok">Continue with Grok</button>
       </div>
     </div>
 
