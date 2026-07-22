@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Contact â€” Warp</title>
+  <meta name="description" content="Contact Warp support" />
+  <meta name="theme-color" content="#000000" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="canonical" href="https://warpte.com/contact" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      min-height: 100vh;
+      background: #000;
+      color: #e8e8e8;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 16px;
+    }
+    .shell {
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
+      min-height: calc(100vh - 32px);
+      background: #161616;
+      border-radius: 20px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid #222;
+    }
+    .hdr-bar { border-bottom: 1px solid #222; flex-shrink: 0; }
+    .hdr {
+      max-width: 980px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 22px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: #e8e8e8;
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .brand-mark { width: 20px; height: 20px; color: #c8c8c8; display: block; }
+    .hdr-links { display: flex; align-items: center; gap: 20px; }
+    .hdr-links a {
+      color: #888;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .hdr-links a:hover,
+    .hdr-links a.on { color: #e8e8e8; }
+
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 22px 48px;
+    }
+    .panel {
+      width: 100%;
+      max-width: 520px;
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 650;
+      letter-spacing: -0.02em;
+      margin: 0 0 8px;
+    }
+    .lede {
+      font-size: 14px;
+      color: #9a9a9a;
+      line-height: 1.5;
+      margin: 0 0 28px;
+    }
+    .lede a { color: #c8c8c8; }
+    .lede a:hover { color: #fff; }
+
+    label {
+      display: block;
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #888;
+      margin: 0 0 6px;
+    }
+    .field { margin-bottom: 16px; }
+    input, textarea {
+      width: 100%;
+      font: inherit;
+      font-size: 14px;
+      color: #e8e8e8;
+      background: #1c1c1c;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 11px 12px;
+      outline: none;
+    }
+    input:focus, textarea:focus {
+      border-color: #444;
+    }
+    textarea {
+      min-height: 140px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+    .hp {
+      position: absolute;
+      left: -9999px;
+      opacity: 0;
+      height: 0;
+      width: 0;
+      overflow: hidden;
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      appearance: none;
+      border: none;
+      border-radius: 8px;
+      background: #e8e8e8;
+      color: #0a0a0a;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      padding: 11px 20px;
+      cursor: pointer;
+    }
+    .btn:hover { background: #fff; }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .status {
+      font-family: ui-monospace, Consolas, monospace;
+      font-size: 12px;
+      color: #9a9a9a;
+    }
+    .status.err { color: #e07070; }
+    .status.ok { color: #a0a0a0; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="hdr-bar">
+      <header class="hdr">
+        <a class="brand" href="/">
+          <svg class="brand-mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+            <g transform="translate(1.2,4.2) scale(0.0435)" fill="currentColor">
+              <rect x="87" y="150" width="11" height="11"/><rect x="100" y="150" width="11" height="11"/><rect x="112" y="150" width="11" height="11"/><rect x="124" y="150" width="11" height="11"/><rect x="212" y="150" width="11" height="11"/><rect x="224" y="150" width="11" height="11"/><rect x="237" y="150" width="11" height="11"/><rect x="250" y="150" width="11" height="11"/><rect x="337" y="150" width="11" height="11"/><rect x="350" y="150" width="11" height="11"/><rect x="374" y="150" width="11" height="11"/>
+              <rect x="100" y="200" width="11" height="11"/><rect x="212" y="200" width="11" height="11"/><rect x="250" y="200" width="11" height="11"/><rect x="337" y="200" width="11" height="11"/>
+              <rect x="150" y="338" width="11" height="11"/><rect x="187" y="338" width="11" height="11"/><rect x="274" y="338" width="11" height="11"/><rect x="312" y="338" width="11" height="11"/>
+            </g>
+          </svg>
+          <span>Warp</span>
+        </a>
+        <nav class="hdr-links">
+          <a href="https://github.com/warpte-labs/warp" target="_blank" rel="noopener">GitHub</a>
+          <a href="/contact" class="on">Contact</a>
+        </nav>
+      </header>
+    </div>
+
+    <main class="main">
+      <div class="panel">
+        <h1>Contact</h1>
+        <p class="lede">
+          Bugs and feature requests:
+          <a href="https://github.com/warpte-labs/warp/issues" target="_blank" rel="noopener">GitHub Issues</a>.
+          For private support, use the form below â€” it goes to
+          <strong style="color:#c8c8c8;font-weight:600">support@warpte.com</strong>
+          (once your mail + form key are connected).
+        </p>
+
+        <form id="form" novalidate>
+          <div class="field">
+            <label for="name">Name</label>
+            <input id="name" name="name" type="text" autocomplete="name" required maxlength="120" />
+          </div>
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" autocomplete="email" required maxlength="200" />
+          </div>
+          <div class="field">
+            <label for="message">Message</label>
+            <textarea id="message" name="message" required maxlength="5000" placeholder="What can we help with?"></textarea>
+          </div>
+          <!-- honeypot -->
+          <input class="hp" type="text" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" />
+
+          <div class="actions">
+            <button type="submit" class="btn" id="submit">Send</button>
+            <span class="status" id="status" role="status"></span>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      var form = document.getElementById("form");
+      var status = document.getElementById("status");
+      var submit = document.getElementById("submit");
+
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        status.className = "status";
+        status.textContent = "Sendingâ€¦";
+        submit.disabled = true;
+
+        var payload = {
+          name: document.getElementById("name").value.trim(),
+          email: document.getElementById("email").value.trim(),
+          message: document.getElementById("message").value.trim(),
+          website: form.website ? form.website.value : "",
+        };
+
+        fetch("/api/contact", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+          .then(function (r) {
+            return r.json().then(function (data) {
+              return { ok: r.ok && data.ok, data: data };
+            });
+          })
+          .then(function (res) {
+            if (res.ok) {
+              status.className = "status ok";
+              status.textContent = "Sent. Weâ€™ll get back to you.";
+              form.reset();
+            } else {
+              status.className = "status err";
+              status.textContent =
+                (res.data && res.data.error) || "Could not send. Try GitHub Issues.";
+            }
+          })
+          .catch(function () {
+            status.className = "status err";
+            status.textContent = "Network error. Try again or use GitHub Issues.";
+          })
+          .finally(function () {
+            submit.disabled = false;
+          });
+      });
+    })();
+  </script>
+</body>
+</html>

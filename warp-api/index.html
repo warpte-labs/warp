@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Warp</title>
+  <meta name="description" content="Warp â€” Grok sidebar agent for VS Code &amp; Cursor" />
+  <meta name="theme-color" content="#000000" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <link rel="canonical" href="https://warpte.com/" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      min-height: 100vh;
+      background: #000;
+      color: #e8e8e8;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 16px;
+    }
+
+    /* Dark grey shell over black page â€” 20px corners visible */
+    .shell {
+      width: 100%;
+      max-width: 1100px;
+      margin: 0 auto;
+      min-height: calc(100vh - 32px);
+      background: #161616;
+      border-radius: 20px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid #222;
+    }
+
+    .hdr-bar {
+      flex-shrink: 0;
+      border-bottom: 1px solid #222;
+    }
+    .hdr {
+      max-width: 980px;
+      width: 100%;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 22px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      color: #e8e8e8;
+      font-family: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .brand-mark {
+      width: 20px;
+      height: 20px;
+      display: block;
+      color: #c8c8c8;
+    }
+    .hdr-links {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+    .hdr-links a {
+      color: #888;
+      text-decoration: none;
+      font-size: 13px;
+    }
+    .hdr-links a:hover { color: #e8e8e8; }
+
+    .main {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 44px;
+      padding: 32px 16px 48px;
+    }
+
+    .hero {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      pointer-events: none;
+    }
+    .hero-svg {
+      width: min(600px, 92vw);
+      height: auto;
+      aspect-ratio: 390 / 230;
+      user-select: none;
+      overflow: hidden;
+      pointer-events: auto;
+      cursor: default;
+    }
+    .hero-svg .w-tile.core {
+      opacity: 0;
+      transform-box: fill-box;
+      transform-origin: center;
+      transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1), fill 140ms ease;
+    }
+    .hero-svg .w-tile.particle {
+      pointer-events: none;
+      transition: transform 100ms ease-out;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .hero-svg .particle-layer { display: none; }
+      .hero-svg { pointer-events: none; }
+      .hero-svg .w-tile.core { transition: none; }
+    }
+
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+      max-width: 100%;
+      position: relative;
+    }
+
+    .cmd {
+      appearance: none;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      background: #1c1c1c;
+      color: #b0b0b0;
+      font-family: ui-monospace, "Cascadia Code", "SF Mono", Consolas, monospace;
+      font-size: 12.5px;
+      padding: 11px 14px;
+      max-width: min(560px, 88vw);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      cursor: copy;
+      user-select: all;
+      transition: background 0.12s ease, border-color 0.12s ease;
+    }
+    .cmd:hover {
+      background: #222;
+      border-color: #3a3a3a;
+      color: #d8d8d8;
+    }
+    .cmd:focus,
+    .cmd:focus-visible {
+      outline: none;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      text-decoration: none;
+      color: #0a0a0a;
+      background: #e8e8e8;
+      border: none;
+      border-radius: 8px;
+      padding: 11px 20px;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .btn:hover { background: #fff; }
+
+    .tip {
+      position: fixed;
+      z-index: 50;
+      pointer-events: none;
+      font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+      font-size: 12px;
+      font-weight: 600;
+      color: #9a9a9a;
+      background: transparent;
+      padding: 0;
+      min-height: 1em;
+      white-space: nowrap;
+      opacity: 0;
+    }
+    .tip.show {
+      opacity: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="hdr-bar">
+      <header class="hdr">
+        <a class="brand" href="/">
+          <svg class="brand-mark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true">
+            <g transform="translate(1.2,4.2) scale(0.0435)" fill="currentColor">
+              <rect x="87" y="150" width="11" height="11"/><rect x="100" y="150" width="11" height="11"/><rect x="112" y="150" width="11" height="11"/><rect x="124" y="150" width="11" height="11"/><rect x="212" y="150" width="11" height="11"/><rect x="224" y="150" width="11" height="11"/><rect x="237" y="150" width="11" height="11"/><rect x="250" y="150" width="11" height="11"/><rect x="337" y="150" width="11" height="11"/><rect x="350" y="150" width="11" height="11"/><rect x="374" y="150" width="11" height="11"/>
+              <rect x="100" y="200" width="11" height="11"/><rect x="212" y="200" width="11" height="11"/><rect x="250" y="200" width="11" height="11"/><rect x="337" y="200" width="11" height="11"/>
+              <rect x="150" y="338" width="11" height="11"/><rect x="187" y="338" width="11" height="11"/><rect x="274" y="338" width="11" height="11"/><rect x="312" y="338" width="11" height="11"/>
+            </g>
+          </svg>
+          <span>Warp</span>
+        </a>
+        <nav class="hdr-links">
+          <a href="https://github.com/warpte-labs/warp" target="_blank" rel="noopener">GitHub</a>
+          <a href="/contact">Contact</a>
+        </nav>
+      </header>
+    </div>
+
+    <main class="main">
+      <div class="hero" id="hero" aria-label="Warp"></div>
+      <div class="row">
+        <button
+          type="button"
+          class="cmd"
+          id="cmd"
+          title="Copy"
+        >code --install-extension warp-agent.warp</button>
+        <a class="btn" href="vscode:extension/warp-agent.warp">Install</a>
+      </div>
+    </main>
+  </div>
+  <div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+  <script src="/hero.js"></script>
+  <script>
+    (function () {
+      var CMD = "code --install-extension warp-agent.warp";
+      var WORD = "Copied";
+      var cmdEl = document.getElementById("cmd");
+      var tip = document.getElementById("tip");
+      var tipTimer = null;
+      var typeIv = null;
+
+      var GREYS = ["#4a4a4a", "#5a5a5a", "#6a6a6a", "#787878", "#888888", "#9a9a9a", "#3e3e3e", "#707070"];
+      var ORANGES = ["#ff5a00", "#ff6b18", "#e85d12", "#ff7a33", "#f06020", "#d9550a", "#ff8a40", "#c94e08"];
+
+      function hash01(i) {
+        var x = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+        return x - Math.floor(x);
+      }
+
+      /** Organic mix: mostly greys, some oranges â€” stable per tile index */
+      function toneFor(i, salt) {
+        var r = hash01(i * 3.17 + (salt || 0));
+        var r2 = hash01(i * 7.91 + 2.3);
+        if (r < 0.16) return ORANGES[Math.floor(r2 * ORANGES.length) % ORANGES.length];
+        if (r < 0.22) return ORANGES[Math.floor(r2 * ORANGES.length) % ORANGES.length];
+        return GREYS[Math.floor(r2 * GREYS.length) % GREYS.length];
+      }
+
+      function paintOrganic(hero) {
+        if (!hero) return;
+        var cores = hero.querySelectorAll(".w-tile.core");
+        cores.forEach(function (el, i) {
+          var c = toneFor(i, 1);
+          el.setAttribute("data-fill", c);
+          el.style.fill = c;
+        });
+        // Particles: recolor as stream creates them
+        var mo = new MutationObserver(function () {
+          hero.querySelectorAll(".w-tile.particle").forEach(function (el, i) {
+            if (el.getAttribute("data-toned")) return;
+            el.setAttribute("data-toned", "1");
+            el.style.fill = toneFor(i + 100, 4);
+          });
+        });
+        var layer = hero.querySelector(".particle-layer");
+        if (layer) mo.observe(layer, { childList: true });
+      }
+
+      function showTypewriter() {
+        if (!cmdEl || !tip) return;
+        var r = cmdEl.getBoundingClientRect();
+        tip.textContent = "";
+        tip.style.left = r.left + r.width / 2 + "px";
+        tip.style.top = r.top - 28 + "px";
+        tip.style.transform = "translateX(-50%)";
+        tip.classList.add("show");
+        if (tipTimer) clearTimeout(tipTimer);
+        if (typeIv) clearInterval(typeIv);
+        var i = 0;
+        typeIv = setInterval(function () {
+          i += 1;
+          tip.textContent = WORD.slice(0, i);
+          if (i >= WORD.length) {
+            clearInterval(typeIv);
+            typeIv = null;
+            tipTimer = setTimeout(function () {
+              tip.classList.remove("show");
+              tip.textContent = "";
+            }, 900);
+          }
+        }, 45);
+      }
+
+      function copyCmd() {
+        function done(ok) {
+          if (ok) showTypewriter();
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(CMD).then(function () {
+            done(true);
+          }).catch(function () {
+            fallback(done);
+          });
+        } else {
+          fallback(done);
+        }
+      }
+
+      function fallback(done) {
+        try {
+          var ta = document.createElement("textarea");
+          ta.value = CMD;
+          ta.setAttribute("readonly", "");
+          ta.style.cssText = "position:fixed;left:-9999px";
+          document.body.appendChild(ta);
+          ta.select();
+          done(!!document.execCommand("copy"));
+          document.body.removeChild(ta);
+        } catch (e) {
+          done(false);
+        }
+      }
+
+      if (cmdEl) {
+        cmdEl.addEventListener("click", copyCmd);
+      }
+
+      fetch("/tiles.json")
+        .then(function (r) { return r.json(); })
+        .then(function (tiles) {
+          var hero = document.getElementById("hero");
+          var H = window.Warp && window.Warp.hero;
+          if (!hero || !H) return;
+          H.mount(hero, tiles);
+          paintOrganic(hero);
+          H.setEmpty(hero, true, tiles, { played: false, forceReplay: false });
+          // re-apply after spiral starts (opacity anim) â€” fills stay via style
+          setTimeout(function () { paintOrganic(hero); }, 50);
+        })
+        .catch(function () {});
+    })();
+  </script>
+</body>
+</html>

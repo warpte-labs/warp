@@ -1,19 +1,19 @@
 {
   "name": "warp",
-  "displayName": "Warp — Grok Sidebar Agent",
+  "displayName": "Warp â€” Grok Sidebar Agent",
   "description": "Secondary-sidebar coding agent for VS Code & Cursor. Chat with Grok Build over ACP: tools, slash commands, model/effort, history, and OAuth.",
-  "version": "0.9.34",
+  "version": "0.9.55",
   "publisher": "warp-agent",
   "license": "MIT",
   "icon": "media/icon.png",
   "repository": {
     "type": "git",
-    "url": "https://github.com/weightliftgurutools/warp.git"
+    "url": "https://github.com/warpte-labs/warp.git"
   },
   "bugs": {
-    "url": "https://github.com/weightliftgurutools/warp/issues"
+    "url": "https://github.com/warpte-labs/warp/issues"
   },
-  "homepage": "https://github.com/weightliftgurutools/warp#readme",
+  "homepage": "https://github.com/warpte-labs/warp#readme",
   "galleryBanner": {
     "color": "#121212",
     "theme": "dark"
@@ -101,7 +101,7 @@
             "yolo"
           ],
           "default": "ask",
-          "markdownDescription": "Tool permission mode. **ask** — prompt every tool. **auto** — allow safe/read tools, prompt for writes and shell. **yolo** — skip prompts (`--always-approve`). YOLO requires confirmation in the UI."
+          "markdownDescription": "Tool permission mode. **ask** â€” prompt every tool. **auto** â€” allow safe/read tools, prompt for writes and shell. **yolo** â€” skip prompts (`--always-approve`). YOLO requires confirmation in the UI."
         },
         "warp.alwaysApprove": {
           "type": "boolean",
@@ -127,7 +127,7 @@
             "strict"
           ],
           "default": "off",
-          "markdownDescription": "Sandbox limits for agent tools (stored for Grok CLI profiles). **off** — no extra limits. **workspace** — project folder. **read-only** — no writes. **strict** — tightest profile."
+          "markdownDescription": "Sandbox limits for agent tools (stored for Grok CLI profiles). **off** â€” no extra limits. **workspace** â€” project folder. **read-only** â€” no writes. **strict** â€” tightest profile."
         },
         "warp.showThinking": {
           "type": "boolean",
@@ -149,7 +149,7 @@
           "default": 100,
           "minimum": 0,
           "maximum": 100,
-          "markdownDescription": "Auto-compact when context usage reaches this percent (0–100). **0 = off · 100 = only at full context.** Also writes Grok `[session] auto_compact_threshold_percent`."
+          "markdownDescription": "Auto-compact when context usage reaches this percent (0â€“100). **0 = off Â· 100 = only at full context.** Also writes Grok `[session] auto_compact_threshold_percent`."
         },
         "warp.binaryPath": {
           "type": "string",

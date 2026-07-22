@@ -9,15 +9,15 @@ It talks to the [Grok Build](https://docs.x.ai/build/overview) / Grok CLI agent 
 - **Grok OAuth** sign-in (same `~/.grok/auth.json` as the TUI)
 - Streaming replies, thinking blocks, and tool activity
 - **Model + reasoning effort** picker
-- **Slash commands** (`/`) with autocomplete — Grok builtins, skills, and Warp actions
+- **Slash commands** (`/`) with autocomplete â€” Grok builtins, skills, and Warp actions
 - Compact context, export/copy chat, session history
 - Attach images/files, `@` workspace mentions, prompt queue
 - Permission modes: **ask** (default) or **yolo** (`/always-approve`)
 
 ## Requirements
 
-1. **VS Code** ≥ 1.85 or **Cursor** (recent)
-2. **Grok CLI / Grokfork binary** that supports `agent … stdio` (ACP)  
+1. **VS Code** â‰¥ 1.85 or **Cursor** (recent)
+2. **Grok CLI / Grokfork binary** that supports `agent â€¦ stdio` (ACP)  
    - Official Grok Build install, **or** a fork binary such as `grokfork`  
    - Must be on your `PATH`, or set **Warp: Binary Path** in settings
 3. A **Grok / xAI account** for live chat
@@ -34,26 +34,26 @@ Warp does **not** embed the agent binary. Install Grok Build (or your fork) firs
 
 ## Install
 
-### Install (public download — no local files required)
+### Install (public download â€” no local files required)
 
 **One command (downloads the VSIX from GitHub Releases):**
 
 ```bash
-code --install-extension https://github.com/weightliftgurutools/warp/releases/latest/download/warp-0.8.4.vsix
+code --install-extension https://github.com/warpte-labs/warp/releases/latest/download/warp-0.8.4.vsix
 ```
 
 ```bash
-cursor --install-extension https://github.com/weightliftgurutools/warp/releases/latest/download/warp-0.8.4.vsix
+cursor --install-extension https://github.com/warpte-labs/warp/releases/latest/download/warp-0.8.4.vsix
 ```
 
-**Or** download from the [latest release](https://github.com/weightliftgurutools/warp/releases/latest) → Extensions → **Install from VSIX…**
+**Or** download from the [latest release](https://github.com/warpte-labs/warp/releases/latest) â†’ Extensions â†’ **Install from VSIXâ€¦**
 
-Then reload → open the project folder you want Grok to work in → **Warp: Open Chat** → **Continue with Grok**.
+Then reload â†’ open the project folder you want Grok to work in â†’ **Warp: Open Chat** â†’ **Continue with Grok**.
 
 ### From source (developers only)
 
 ```bash
-git clone https://github.com/weightliftgurutools/warp.git
+git clone https://github.com/warpte-labs/warp.git
 cd warp
 npm install
 npm run compile
@@ -64,7 +64,7 @@ npm run package
 
 | Action | How |
 |--------|-----|
-| Open chat | Command Palette → **Warp: Open Chat** |
+| Open chat | Command Palette â†’ **Warp: Open Chat** |
 | Sign in | Footer **Sign in**, or **Warp: Sign In** |
 | Slash commands | Type `/` or press the `/` toolbar button |
 | New chat | Top **+** or `/new` |
@@ -86,15 +86,15 @@ Open **Settings** and search for `Warp`.
 ## Security notes
 
 - **Ask mode** (default) may prompt when the agent wants to run tools.  
-- **Yolo / always-approve** lets the agent run tools without prompts — only enable if you trust the workspace.
+- **Yolo / always-approve** lets the agent run tools without prompts â€” only enable if you trust the workspace.
 - Auth tokens live in `~/.grok/auth.json` (managed by the Grok CLI), not in the extension package.
-- The extension spawns a local child process; it does not send your code to third-party servers itself — the **Grok agent** talks to xAI APIs per your account.
+- The extension spawns a local child process; it does not send your code to third-party servers itself â€” the **Grok agent** talks to xAI APIs per your account.
 
 ## Slash commands (highlights)
 
 **Warp-handled:** `/new`, `/compact`, `/export`, `/copy`, `/model`, `/effort`, `/always-approve`, `/resume`, `/history`, `/rename`, `/login`, `/logout`, `/multiline`  
 
-**Passed to the agent:** `/context`, `/plan`, skills (`/review`, `/help`, plugins, …) — whatever your Grok install advertises.
+**Passed to the agent:** `/context`, `/plan`, skills (`/review`, `/help`, plugins, â€¦) â€” whatever your Grok install advertises.
 
 ## Development
 
@@ -114,4 +114,4 @@ MIT. The extension package includes a `LICENSE` file.
 
 ## Disclaimer
 
-Warp is an independent community extension. It is **not** an official product of xAI, Warp.dev, or VS Code. “Grok” and related marks belong to their owners.
+Warp is an independent community extension. It is **not** an official product of xAI, Warp.dev, or VS Code. â€œGrokâ€ and related marks belong to their owners.
